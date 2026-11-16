@@ -1,0 +1,23 @@
+# One person's coursework and settings. NEVER commit these: the repository is public so
+# that testers can download and update without an account.
+/config.json
+/data/
+/work/
+/reports/
+/feedback/
+
+# Build output — published as release files, not as source
+/dist/
+/build/
+*.spec
+
+# Local machinery
+__pycache__/
+*.pyc
+*.tmp
+/.claude/launch.json
+/.claude/settings.local.json
+
+# Notes and tooling for the owner's own Claude sessions — they describe one person's course
+/CLAUDE.md
+/.claude/

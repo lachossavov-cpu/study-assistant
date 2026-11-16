@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn>=0.29
+edge-tts>=7.2
+websockets>=12
+python-multipart>=0.0.9

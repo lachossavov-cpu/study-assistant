@@ -1,0 +1,1939 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistant</title>
+<link rel="manifest" href="/app.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="theme-color" content="#04070d">
+<style>
+  :root {
+    --bg: #04070d;
+    --panel: rgba(10, 20, 34, .72);
+    --line: rgba(79, 216, 232, .22);
+    --cyan: #4fd8e8;
+    --cyan-dim: rgba(79, 216, 232, .55);
+    --amber: #ffb347;
+    --red: #ff5f6d;
+    --green: #5ce6a8;
+    --text: #cfe6ef;
+    --muted: #6b8798;
+    --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--mono); font-size: 14px; overflow: hidden;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(900px 600px at 22% 38%, rgba(79,216,232,.10), transparent 62%),
+      radial-gradient(700px 500px at 82% 78%, rgba(79,216,232,.06), transparent 60%);
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 99; opacity: .35;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,.025) 0 1px, transparent 1px 3px);
+  }
+
+  header {
+    position: relative; z-index: 2;
+    display: flex; align-items: baseline; gap: 8px 20px; flex-wrap: wrap;
+    padding: 14px 22px; border-bottom: 1px solid var(--line);
+  }
+  .brand { font-size: 15px; letter-spacing: .34em; color: var(--cyan); text-shadow: 0 0 18px rgba(79,216,232,.5); }
+  .brand span { color: var(--muted); letter-spacing: .18em; font-size: 11px; margin-left: 8px; }
+  .course { flex: 1; color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 80px; }
+  .clock { font-size: 18px; color: var(--cyan); letter-spacing: .1em; font-variant-numeric: tabular-nums; }
+  .sync { font-size: 10px; color: var(--muted); letter-spacing: .12em; }
+  .langsw {
+    flex: 0 0 auto; align-self: center; padding: 6px 10px; font-size: 10px;
+    letter-spacing: .18em; min-width: 54px;
+  }
+
+  main {
+    position: relative; z-index: 2;
+    display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 18px;
+    padding: 18px 22px; height: calc(100vh - 56px);
+  }
+  /* One column on a phone. The page itself has to scroll here: with the desktop rule
+     (body overflow hidden) a main taller than the screen simply could not be reached. */
+  @media (max-width: 900px) {
+    html, body { height: auto; }
+    body { overflow: auto; -webkit-text-size-adjust: 100%; }
+    main { grid-template-columns: minmax(0, 1fr); height: auto; overflow: visible; }
+    .tasks { overflow: visible; padding-right: 0; }
+    .transcript { max-height: 180px; flex: 0 0 auto; }
+    .course { flex-basis: 100%; order: 5; white-space: normal; }
+    button, .tab, .filebtn { min-height: 44px; }      /* a thumb, not a mouse pointer */
+    .task-actions button { padding: 10px 13px; }
+    .tabs { gap: 14px; overflow-x: auto; }
+    .askrow input, .field input, .field textarea { font-size: 16px; }  /* iOS zooms below 16 */
+  }
+  @media (max-width: 420px) {
+    main { padding: 12px; gap: 12px; } .panel { padding: 12px; }
+    header { padding: 12px; } .brand { letter-spacing: .22em; }
+  }
+
+  .iconbtn { flex: 0 0 auto; align-self: center; padding: 6px 10px; font-size: 13px;
+             letter-spacing: 0; min-width: 38px; }
+  .field { display: flex; flex-direction: column; gap: 5px; font-size: 10px;
+           letter-spacing: .16em; color: var(--muted); text-transform: uppercase; }
+  .field input, .field textarea {
+    background: #04070d; color: var(--text); border: 1px solid var(--line);
+    padding: 10px 12px; font-family: var(--mono); font-size: 13px; letter-spacing: 0;
+    text-transform: none;
+  }
+  .field textarea { min-height: 64px; resize: vertical; line-height: 1.5; }
+  .field input:focus, .field textarea:focus { outline: none; border-color: var(--cyan-dim); }
+  .form-box { overflow: auto; }
+  .form-box .modal-actions { flex-wrap: wrap; }
+  .step { border: 1px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .step p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted); }
+  .step b { color: var(--cyan); font-weight: 400; }
+  .pick { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }
+  .pick label { display: flex; gap: 9px; align-items: flex-start; font-size: 12px;
+                padding: 6px 8px; border: 1px solid transparent; cursor: pointer; }
+  .pick label:hover { border-color: var(--line); }
+  .pick label.old { opacity: .5; }
+  .pick input { accent-color: #4fd8e8; margin-top: 2px; }
+  .stars { display: flex; gap: 6px; }
+  .stars button { flex: 0 0 auto; font-size: 18px; padding: 6px 10px; letter-spacing: 0; color: var(--muted); }
+  .stars button.on { color: var(--amber); border-color: rgba(255,179,71,.5); }
+  .check { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; color: var(--text);
+           line-height: 1.5; cursor: pointer; }
+  .check input { accent-color: #4fd8e8; margin-top: 3px; }
+  .paircode { font-size: 26px; letter-spacing: .3em; color: var(--cyan); }
+  .news { border: 1px solid var(--line); border-left: 3px solid var(--cyan-dim);
+          padding: 12px 14px; background: rgba(8,16,28,.5); }
+  .news.unseen { border-left-color: var(--amber); }
+  .news h5 { margin: 0 0 4px; font-size: 13px; font-weight: 400; color: var(--text); line-height: 1.4; }
+  .news .meta { font-size: 10px; letter-spacing: .1em; color: var(--muted); margin-bottom: 8px; }
+  .news .body { font-size: 12px; line-height: 1.6; color: var(--muted); white-space: pre-wrap; }
+  body.no-ai .ai-only { display: none !important; }
+
+  .panel {
+    position: relative; background: var(--panel); border: 1px solid var(--line);
+    padding: 18px; backdrop-filter: blur(2px);
+  }
+  .panel::before, .panel::after {
+    content: ""; position: absolute; width: 12px; height: 12px; border: 1px solid var(--cyan); opacity: .7;
+  }
+  .panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .panel::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  .left { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+
+  .reactor { display: grid; place-items: center; padding: 10px 0 4px; }
+  /* a fixed 268px ring overflowed narrow windows — it now shrinks with its container */
+  .ring { position: relative; width: min(268px, 100%); aspect-ratio: 1 / 1; }
+  .ring svg { width: 100%; height: 100%; display: block; transform: rotate(-90deg); overflow: visible; }
+  .ring .track { fill: none; stroke: rgba(79,216,232,.10); stroke-width: 10; }
+  .ring .prog {
+    fill: none; stroke: var(--cyan); stroke-width: 10; stroke-linecap: round;
+    filter: drop-shadow(0 0 10px currentColor); transition: stroke-dashoffset .8s ease, stroke .5s;
+  }
+  .ring .ticks { stroke: rgba(79,216,232,.30); stroke-width: 2; }
+  .ring-mid { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 2px; }
+  .big { font-size: clamp(34px, 16vw, 62px); line-height: 1; color: var(--cyan);
+         text-shadow: 0 0 26px rgba(79,216,232,.45); font-variant-numeric: tabular-nums; }
+  .big.warn { color: var(--amber); text-shadow: 0 0 26px rgba(255,179,71,.45); }
+  .big.crit { color: var(--red); text-shadow: 0 0 26px rgba(255,95,109,.5); }
+  .unit { font-size: 11px; letter-spacing: .35em; color: var(--muted); }
+  .deadline-title { font-size: 12px; color: var(--text); max-width: 220px; margin: 8px auto 0; line-height: 1.4; }
+  .deadline-when { font-size: 10px; letter-spacing: .16em; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 8px; }
+  .stat { border: 1px solid var(--line); padding: 9px 6px; text-align: center; }
+  .stat b { display: block; font-size: 21px; color: var(--cyan); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .stat.alert b { color: var(--red); }
+  .stat.warn b { color: var(--amber); }
+  .stat.ok b { color: var(--green); }
+  .stat span { font-size: 9px; letter-spacing: .16em; color: var(--muted); }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    background: transparent; color: var(--cyan); border: 1px solid var(--line);
+    padding: 11px 12px; cursor: pointer; transition: .18s; flex: 1;
+  }
+  button:hover { background: rgba(79,216,232,.10); border-color: var(--cyan-dim); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.mic { flex: 1.4; }
+  button.mic.live {
+    color: var(--red); border-color: var(--red);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,95,109,.45); }
+    50%      { box-shadow: 0 0 0 9px rgba(255,95,109,0); }
+  }
+  button.busy { color: var(--amber); border-color: rgba(255,179,71,.5); }
+  button.playing { color: var(--green); border-color: rgba(92,230,168,.6); }
+  button.tap {
+    flex: 1 0 100%; color: var(--amber); border-color: var(--amber);
+    animation: pulse-amber 1.3s ease-in-out infinite;
+  }
+  @keyframes pulse-amber {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,179,71,.45); }
+    50%      { box-shadow: 0 0 0 9px rgba(255,179,71,0); }
+  }
+  button.solve { color: var(--green); border-color: rgba(92,230,168,.35); }
+  button.solve:hover { background: rgba(92,230,168,.10); border-color: var(--green); }
+
+  .modal {
+    position: fixed; inset: 0; z-index: 80; display: none;
+    background: rgba(2,5,10,.82); padding: 5vh 4vw;
+  }
+  .modal.on { display: grid; place-items: center; }
+  .modal-box {
+    width: min(760px, 100%); max-height: 90vh; display: flex; flex-direction: column; gap: 12px;
+    background: #060d18; border: 1px solid var(--cyan-dim); padding: 18px;
+  }
+  .modal-box h3 { margin: 0; font-size: 11px; letter-spacing: .26em; color: var(--cyan);
+                  font-weight: 400; text-transform: uppercase; }
+  .modal-box textarea {
+    flex: 1; min-height: 320px; resize: vertical; background: #04070d; color: var(--text);
+    border: 1px solid var(--line); padding: 12px; font-family: var(--mono); font-size: 12px;
+    line-height: 1.6; white-space: pre-wrap;
+  }
+  .modal-actions { display: flex; gap: 10px; }
+
+  .transcript {
+    border: 1px solid var(--line); padding: 11px 12px; min-height: 74px; flex: 1;
+    font-size: 12px; line-height: 1.55; color: var(--muted); overflow: auto;
+  }
+  .transcript .you { color: var(--cyan); }
+  .transcript .me { color: var(--text); }
+  .transcript .err { color: var(--red); }
+  .transcript p { margin: 0 0 7px; }
+  .transcript .ts { opacity: .5; font-size: 10px; letter-spacing: .06em; }
+
+  .askrow { display: flex; gap: 8px; }
+  .askrow input {
+    flex: 1; min-width: 0; background: rgba(4,7,13,.7); color: var(--text);
+    border: 1px solid var(--line); padding: 11px 12px;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .askrow input:focus { outline: none; border-color: var(--cyan-dim); }
+  .askrow input::placeholder { color: var(--muted); }
+  .askrow button { flex: 0 0 auto; }
+  .ask-status {
+    font-size: 10px; letter-spacing: .14em; color: var(--amber);
+    text-transform: uppercase; min-height: 13px;
+  }
+
+  .right { min-height: 0; display: flex; flex-direction: column; }
+  .tabs { display: flex; gap: 18px; margin: 0 0 12px; border-bottom: 1px solid var(--line); }
+  .tab {
+    flex: 0 0 auto; background: none; border: 0; border-bottom: 2px solid transparent;
+    padding: 0 0 9px; margin-bottom: -1px; color: var(--muted);
+    font-size: 11px; letter-spacing: .28em; text-transform: uppercase; cursor: pointer;
+  }
+  .tab:hover { background: none; color: var(--text); }
+  .tab.on { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+  .task.is-done { border-left-color: var(--green); opacity: .82; }
+  .task.is-done .task-title { text-decoration: line-through; text-decoration-color: rgba(207,230,239,.35); }
+  .chip.ok { color: var(--green); border-color: rgba(92,230,168,.45); }
+  .files { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 9px; }
+  .file {
+    display: flex; align-items: center; gap: 9px; padding: 6px 9px;
+    border: 1px solid var(--line); background: rgba(4,7,13,.5); font-size: 11px;
+  }
+  .file a { flex: 1; color: var(--cyan); text-decoration: none; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file a:hover { text-decoration: underline; }
+  .file.sol { border-left: 2px solid var(--cyan); }
+  .file.att { border-left: 2px solid var(--green); }
+  .file .meta { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .file .rm {
+    flex: 0 0 auto; background: none; border: 0; color: var(--muted);
+    padding: 0 4px; font-size: 12px; cursor: pointer; letter-spacing: 0;
+  }
+  .file .rm:hover { color: var(--red); background: none; }
+  .filebtn {
+    display: inline-block; padding: 7px 11px; font-size: 10px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--green); border: 1px dashed rgba(92,230,168,.45);
+    cursor: pointer; transition: .18s;
+  }
+  .filebtn:hover { background: rgba(92,230,168,.08); border-color: var(--green); }
+  .filebtn.busy { color: var(--amber); border-color: rgba(255,179,71,.5); }
+
+  /* The brief is the reason the card is opened at all, so it reads like prose and
+     keeps the line breaks it was written with, rather than becoming another bullet list. */
+  .brief {
+    white-space: pre-wrap; line-height: 1.5; padding: 10px 12px; margin: 4px 0 2px;
+    border-left: 2px solid rgba(79,216,232,.55); background: rgba(79,216,232,.06);
+    border-radius: 0 3px 3px 0;
+  }
+  .brief-src { font-size: 10px; letter-spacing: .06em; opacity: .55; margin: 0 0 8px 12px; }
+  .brief-missing {
+    font-size: 11px; opacity: .6; font-style: italic;
+    padding: 8px 12px; margin: 4px 0 8px;
+    border-left: 2px solid rgba(255,179,71,.45); background: rgba(255,179,71,.05);
+  }
+  .loginbtn {
+    font: inherit; font-size: 11px; cursor: pointer; margin-left: 4px;
+    padding: 2px 9px; border: 1px solid rgba(255,179,71,.6); border-radius: 3px;
+    background: rgba(255,179,71,.12); color: var(--amber);
+  }
+  .loginbtn:hover { background: rgba(255,179,71,.24); }
+  .loginbtn:disabled { opacity: .45; cursor: default; }
+  .submission { border-left: 2px solid rgba(92,230,168,.4); padding-left: 10px; margin: 6px 0; }
+  .submission .when { font-size: 10px; letter-spacing: .1em; opacity: .65; }
+  .tasks { overflow: auto; display: flex; flex-direction: column; gap: 9px; padding-right: 6px; }
+  .tasks::-webkit-scrollbar { width: 6px; }
+  .tasks::-webkit-scrollbar-thumb { background: rgba(79,216,232,.25); }
+
+  .task {
+    border: 1px solid var(--line); border-left: 3px solid var(--cyan-dim);
+    padding: 12px 14px; cursor: pointer; transition: .18s; background: rgba(8,16,28,.5);
+  }
+  .task:hover { border-color: var(--cyan-dim); background: rgba(79,216,232,.05); }
+  .task.crit { border-left-color: var(--red); }
+  .task.warn { border-left-color: var(--amber); }
+  .task.flash { animation: flash 1.4s ease; }
+  @keyframes flash { 0% { background: rgba(79,216,232,.28); } 100% { background: rgba(8,16,28,.5); } }
+  .task-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .task-title { flex: 1; font-size: 13px; line-height: 1.4; min-width: 140px; }
+  .chip {
+    font-size: 9px; letter-spacing: .12em; padding: 3px 7px; border: 1px solid var(--line);
+    color: var(--muted); text-transform: uppercase; white-space: nowrap;
+  }
+  .chip.due { color: var(--cyan); border-color: var(--cyan-dim); }
+  .chip.due.warn { color: var(--amber); border-color: rgba(255,179,71,.5); }
+  .chip.due.crit { color: var(--red); border-color: rgba(255,95,109,.5); }
+  .chip.status-in_progress { color: var(--amber); border-color: rgba(255,179,71,.5); }
+  .chip.status-blocked { color: var(--red); }
+
+  .task-body { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+               font-size: 12px; line-height: 1.6; color: var(--muted); }
+  .task.open .task-body { display: block; }
+  .task-body h4 { margin: 12px 0 5px; font-size: 10px; letter-spacing: .18em; color: var(--cyan-dim);
+                  font-weight: 400; text-transform: uppercase; }
+  .task-body ul { margin: 0; padding-left: 17px; }
+  .task-body li { margin-bottom: 4px; }
+  .task-body a { color: var(--cyan); }
+  .task-actions { display: flex; gap: 7px; margin-top: 13px; flex-wrap: wrap; }
+  .task-actions button { flex: 0 0 auto; padding: 7px 11px; font-size: 10px; }
+
+  .empty { color: var(--muted); font-size: 12px; padding: 30px; text-align: center; letter-spacing: .1em; }
+
+  .offline {
+    position: fixed; inset: 0 0 auto 0; z-index: 50; display: none;
+    padding: 9px 22px; background: rgba(255,95,109,.14);
+    border-bottom: 1px solid rgba(255,95,109,.5); color: var(--red);
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  }
+  body.is-offline .offline { display: block; }
+  body.is-offline main { opacity: .35; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<div class="offline" id="offline"></div>
+
+<header>
+  <div class="brand"><b id="brand" style="font-weight:400">…</b><span id="brand-org"></span></div>
+  <div class="course" id="course">…</div>
+  <button class="iconbtn" id="open-feedback" title="Feedback">★</button>
+  <button class="iconbtn" id="open-setup" title="Settings">⚙</button>
+  <button class="langsw" id="lang">EN</button>
+  <div>
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="sync" id="sync"></div>
+  </div>
+</header>
+
+<main>
+  <section class="left">
+    <div class="panel reactor">
+      <div class="ring">
+        <svg viewBox="0 0 268 268">
+          <circle class="track" cx="134" cy="134" r="120"></circle>
+          <circle class="prog" id="prog" cx="134" cy="134" r="120"
+                  stroke-dasharray="754" stroke-dashoffset="754"></circle>
+          <g class="ticks" id="ticks"></g>
+        </svg>
+        <div class="ring-mid">
+          <div class="big" id="big">—</div>
+          <div class="unit" id="unit"></div>
+        </div>
+      </div>
+      <div class="deadline-title" id="dl-title"></div>
+      <div class="deadline-when" id="dl-when"></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b id="s-open">0</b><span id="l-open"></span></div>
+      <div class="stat alert"><b id="s-over">0</b><span id="l-over"></span></div>
+      <div class="stat warn"><b id="s-week">0</b><span id="l-week"></span></div>
+      <div class="stat ok"><b id="s-done">0</b><span id="l-done"></span></div>
+    </div>
+
+    <div class="controls">
+      <button class="mic" id="mic"></button>
+      <button id="report"></button>
+      <button id="refresh">↻</button>
+      <button id="tap" class="tap" hidden></button>
+    </div>
+
+    <div class="transcript" id="log"></div>
+
+    <div class="askrow ai-only">
+      <input id="ask-input" type="text" autocomplete="off" spellcheck="false">
+      <button id="ask-send"></button>
+    </div>
+    <div class="ask-status ai-only" id="ask-status"></div>
+  </section>
+
+  <section class="right panel">
+    <div class="tabs">
+      <button class="tab on" id="tab-active"></button>
+      <button class="tab" id="tab-done"></button>
+      <button class="tab" id="tab-sched"></button>
+      <button class="tab" id="tab-news"></button>
+    </div>
+    <div class="tasks" id="tasks"></div>
+  </section>
+</main>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <h3 id="modal-title"></h3>
+    <textarea id="modal-text" readonly spellcheck="false"></textarea>
+    <div class="modal-actions">
+      <button id="modal-send" hidden></button>
+      <button id="modal-copy"></button>
+      <button id="modal-cancel" hidden></button>
+      <button id="modal-close"></button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="setup">
+  <div class="modal-box form-box">
+    <h3 id="su-title"></h3>
+    <label class="field"><span id="su-l-name"></span>
+      <input id="su-name" maxlength="24" autocomplete="off" spellcheck="false"></label>
+    <label class="field"><span id="su-l-addr"></span>
+      <input id="su-addr" maxlength="24" autocomplete="off" spellcheck="false"></label>
+    <div class="step">
+      <label class="field"><span id="su-l-url"></span>
+        <input id="su-url" autocomplete="off" spellcheck="false" inputmode="url"></label>
+      <p id="su-bs-text"></p>
+      <div class="modal-actions">
+        <button id="su-login"></button>
+        <button id="su-find"></button>
+      </div>
+      <div class="ask-status" id="su-status"></div>
+      <div class="pick" id="su-courses"></div>
+    </div>
+    <div class="step" id="su-teams">
+      <label class="field"><span id="su-l-teams"></span></label>
+      <p id="su-teams-text"></p>
+      <div class="modal-actions"><button id="su-teams-toggle"></button></div>
+    </div>
+    <div class="step" id="su-phone">
+      <p id="su-phone-text"></p>
+      <div class="modal-actions"><button id="su-phone-toggle"></button></div>
+      <div id="su-phone-info"></div>
+    </div>
+    <div class="modal-actions">
+      <button id="su-save" class="solve"></button>
+      <button id="su-close"></button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="feedback">
+  <div class="modal-box form-box">
+    <h3 id="fb-title"></h3>
+    <div class="stars" id="fb-stars"></div>
+    <label class="field"><span id="fb-l-liked"></span><textarea id="fb-liked"></textarea></label>
+    <label class="field"><span id="fb-l-annoyed"></span><textarea id="fb-annoyed"></textarea></label>
+    <label class="field"><span id="fb-l-quote"></span><textarea id="fb-quote"></textarea></label>
+    <label class="field"><span id="fb-l-name"></span>
+      <input id="fb-name" maxlength="80" autocomplete="off"></label>
+    <label class="check"><input type="checkbox" id="fb-may"><span id="fb-l-may"></span></label>
+    <div class="ask-status" id="fb-status"></div>
+    <div class="modal-actions">
+      <button id="fb-send" class="solve"></button>
+      <button id="fb-close"></button>
+    </div>
+  </div>
+</div>
+
+<audio id="player"></audio>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const C = 2 * Math.PI * 120;
+
+/* ------------------------------------------------ language */
+const I18N = {
+  en: {
+    locale: 'en-GB', hour12: true,
+    mic: '🎙 Speak', micLive: '🎙 Listening…', micNone: 'No microphone',
+    report: 'Report', tasks: 'Active tasks', empty: 'No active tasks',
+    open: 'OPEN', overdue: 'OVERDUE', week: 'THIS WEEK', done: 'DONE',
+    synced: 'SYNCED', neverSynced: 'NEVER SYNCED',
+    noDeadline: 'NO DEADLINE', noUpcoming: 'No upcoming deadlines',
+    day: 'DAY', days: 'DAYS', hour: 'HOUR', hours: 'HOURS', minutes: 'MINUTES',
+    dayLate: 'DAY OVERDUE', daysLate: 'DAYS OVERDUE',
+    chipNone: 'no deadline', chipToday: 'TODAY', chipTomorrow: 'tomorrow',
+    chipIn: (d) => `in ${d} d`, chipLate: (d) => `${d} d overdue`,
+    handIn: 'You hand in', reqs: 'Requirements', materials: 'Materials',
+    tabActive: 'Active', tabDone: (n) => `Done (${n})`, noneDone: 'Nothing finished yet',
+    reopen: '↩ Reopen', completedOn: 'finished', submittedLabel: 'Submitted',
+    start: 'Start', markDone: 'Done', blocked: 'Blocked', read: '🔊 Read',
+    preparing: '… wait', stopRead: '■ Stop',
+    solve: '✦ Solve with Claude', sending: '… sending', solving: '… solving',
+    solveQueued: 'Sent. Claude is working on it — the file appears under Files when it is done.',
+    files: 'Files', attach: '+ Attach files ', noFiles: 'Nothing here yet',
+    solutionLabel: 'From Claude', attachLabel: 'Attached, ready to submit', remove: 'Remove',
+    uploaded: (n) => `${n} file${n > 1 ? 's' : ''} attached`, uploadFail: 'Rejected: ',
+    submit: '⇪ Submit', submitTitle: 'Prepare submission', send: 'Queue it',
+    submitHint: 'Paste the link or the file path to hand in.\nLines starting with # are ignored.',
+    submitQueued: 'Submission queued. Claude fills it into Brightspace and stops at the Submit button — you press it.',
+    submitEmpty: 'Nothing to submit.',
+    solveCopied: 'Copied for Claude — paste it into the chat. Saved as',
+    solveSaved: 'Saved for Claude as',
+    promptTitle: 'Paste this to Claude', copy: 'Copy', close: 'Close',
+    askPlaceholder: 'Ask Claude about any of this…', askSend: 'Ask',
+    queued: 'Queued. Claude answers this from the chat session — the reply lands here and is read aloud.',
+    waitingFor: (n, t) => (n === 1 ? '⋯ waiting' : `⋯ waiting on ${n}`) +
+      ` · ${t} · click to see how to answer`,
+    answered: 'Claude answered:',
+    pendingTitle: 'Questions waiting for an answer',
+    pendingHelp: 'The dashboard does not answer these itself — Claude does, from the chat '
+      + 'session, and the reply appears here within four seconds.\n'
+      + 'Paste the line below into the chat, or run it in a terminal in the project folder.\n'
+      + 'To drop a question instead, press Cancel.',
+    cancelPending: 'Cancel the oldest',
+    updated: (id, s) => `Updated: ${id} → ${s}`,
+    noAnswer: 'Server did not answer.', voiceFail: 'Voice failed: ',
+    syncing: 'Checking Brightspace for anything new…',
+    syncFresh: 'Brightspace was checked recently — nothing to re-check.',
+    syncNoWatcher: 'Check queued, but no Claude session is listening. '
+      + 'Open one and it will run — the dashboard has no Brightspace session of its own.',
+    brief: 'What you have to do',
+    briefFrom: 'from',
+    spokenIntro: 'I checked Brightspace as well.',
+    spokenMoved: (t, when) => `The deadline for ${t} moved to ${when}.`,
+    spokenNewFolder: (t, when) => `There is a new submission folder: ${t}${when ? ', due ' + when : ''}.`,
+    spokenNews: (t) => `New announcement: ${t}.`,
+    syncFailedSpoken: 'I could not reach Brightspace, so this report is from the last check, not from now.',
+    loginBtn: 'Sign in',
+    loginOpening: 'A Chrome window is opening. Usually it signs itself back in and you '
+      + 'need do nothing; if it does ask, sign in there and tick "Stay signed in".',
+    syncNothingNew: 'Brightspace checked — nothing new.',
+    syncFailed: (m) => `Could not check Brightspace: ${m}`,
+    syncMoved: (t, to) => `⚠ Deadline moved: ${t} → ${to}`,
+    syncNewFolder: (t, due) => `New submission folder: ${t}${due ? ' (' + due + ')' : ''}`,
+    syncNews: (t) => `New announcement: ${t}`,
+    staleWarn: (age) => `⚠ Brightspace last checked ${age}`,
+    tapToPlay: '▶ Chrome blocked the sound — click here to play',
+    blockedAudio: 'Chrome refused to start the audio by itself. The report is ready — press the amber button.',
+    stopped: 'Stopped.', overdueBy: (n) => `${n} days overdue.`,
+    dueToday: 'Deadline is today.', daysLeft: (n) => `${n} days left.`,
+    translatedNote: 'original',
+    tabNews: (n) => n ? `News (${n})` : 'News', noNews: 'No announcements yet',
+    unknownCmd: 'That is not something I can do yet.',
+    offline: '✕ The app is not responding — start it again. Retrying…',
+    briefMissing: 'The brief for this one has not been pulled out of Brightspace yet.',
+    briefMissingNoAi: 'Open the assignment in Brightspace for the full brief — this early version tracks deadlines, not the text of the assignment.',
+    syncSetup: 'No course is selected yet — open Settings (⚙) and pick your courses.',
+    syncLogin: 'The Brightspace sign-in has expired — it lasts about a day. '
+      + 'This report is from the last check, not from now.',
+    suTitle: 'Set up your assistant', suName: 'What is your assistant called?',
+    suAddr: 'How should it address you? (optional — e.g. sir, boss, your name)',
+    suUrl: 'Your Brightspace address',
+    suBsText: '1. Open the sign-in window and log in with your school account — the password goes to your school, never to this app. 2. Come back and find your courses. 3. Tick the ones to follow.',
+    suLogin: '1 · Open sign-in window', suFind: '2 · Find my courses',
+    suFinding: 'Asking Brightspace for your courses…',
+    suNeedLogin: 'Not signed in yet. Finish signing in in the browser window, then press Find again.',
+    suNoBrowser: 'Neither Chrome nor Edge was found on this computer. Install Chrome, then try again.',
+    suFound: (n) => `${n} course${n === 1 ? '' : 's'} found — tick the ones to follow.`,
+    suFail: (m) => `Could not list the courses: ${m}`,
+    suSave: 'Save', suSaved: 'Saved.', suPickOne: 'Tick at least one course.',
+    suNameMissing: 'Give your assistant a name.',
+    suPhoneText: 'Use it on your phone: the phone opens this same dashboard from this computer, over the same Wi-Fi. The computer has to be on. School networks such as eduroam usually block this; home Wi-Fi works.',
+    suPhoneOn: 'Phone access: ON — switch off', suPhoneOff: 'Phone access: OFF — switch on',
+    suPhoneRestart: 'Close the app and start it again for this to take effect.',
+    suPhoneOpen: 'On the phone, open:', suPhoneCode: 'and enter this code:',
+    suPhoneDevices: (n) => `${n} device${n === 1 ? '' : 's'} paired`,
+    fbTitle: 'Tell me what you think', fbLiked: 'What worked for you?',
+    fbAnnoyed: 'What got in the way or broke?',
+    fbQuote: 'In one sentence — what would you tell a classmate about it?',
+    fbName: 'Your name (optional)',
+    fbMay: 'You may quote my sentence publicly, with my first name.',
+    fbSend: 'Send', fbEmpty: 'Write something first, or pick a rating.',
+    fbSaved: 'Thank you — saved.', fbMail: 'Your mail program is opening with the text filled in. Press Send there.',
+    fbCopyTitle: 'Send this to whoever gave you the app',
+    updReady: (v, n) => `Update ${v} is downloaded — close the app and open it again to use it.` + (n ? ` What changed: ${n}` : ''),
+    updNeedsDownload: (v) => `Version ${v} needs a fresh download — this copy is too old to update itself.`,
+    updRolledBack: (v) => `Update ${v} did not start correctly, so the previous version is running. Nothing was lost.`,
+    tabSched: 'Schedule', noSched: 'No classes in the next two weeks, or Teams is not connected.',
+    schedToday: 'Today', schedTomorrow: 'Tomorrow', schedOnline: 'online',
+    suTeams: 'Teams timetable (optional)',
+    suTeamsText: 'Also show your classes from the Teams calendar. It reads your timetable only — nothing is ever sent, posted or changed in Teams. Sign in with the same button above; the first time, a Teams tab may open to finish signing in.',
+    suTeamsOn: 'Teams: ON — switch off', suTeamsOff: 'Teams: OFF — switch on',
+  },
+  bg: {
+    locale: 'bg-BG', hour12: false,
+    mic: '🎙 Говори', micLive: '🎙 Слушам…', micNone: 'Няма микрофон',
+    report: 'Репорт', tasks: 'Активни задачи', empty: 'Няма активни задачи',
+    open: 'ОТВОРЕНИ', overdue: 'ПРОСРОЧ.', week: 'ТАЗИ СЕДМ.', done: 'ГОТОВИ',
+    synced: 'СИНХР.', neverSynced: 'БЕЗ СИНХРОНИЗАЦИЯ',
+    noDeadline: 'НЯМА СРОК', noUpcoming: 'Няма предстоящи срокове',
+    day: 'ДЕН', days: 'ДНИ', hour: 'ЧАС', hours: 'ЧАСА', minutes: 'МИНУТИ',
+    dayLate: 'ДЕН ПРОСРОЧЕНА', daysLate: 'ДНИ ПРОСРОЧЕНА',
+    chipNone: 'без срок', chipToday: 'ДНЕС', chipTomorrow: 'утре',
+    chipIn: (d) => `след ${d} д`, chipLate: (d) => `просрочена ${d} д`,
+    handIn: 'Предава се', reqs: 'Изисквания', materials: 'Материали',
+    tabActive: 'Активни', tabDone: (n) => `Готови (${n})`, noneDone: 'Още нищо не е приключено',
+    reopen: '↩ Върни', completedOn: 'приключена', submittedLabel: 'Предадено',
+    start: 'Започвам', markDone: 'Готово', blocked: 'Блокирана', read: '🔊 Прочети',
+    preparing: '… чакай', stopRead: '■ Спри',
+    solve: '✦ Реши с Claude', sending: '… пращам', solving: '… решавам',
+    solveQueued: 'Пуснато. Claude работи по него — файлът излиза под Файлове, щом е готов.',
+    files: 'Файлове', attach: '+ Прикачи файлове ', noFiles: 'Още няма нищо',
+    solutionLabel: 'От Claude', attachLabel: 'Прикачени, готови за предаване', remove: 'Махни',
+    uploaded: (n) => `${n} файла прикачени`, uploadFail: 'Отхвърлени: ',
+    submit: '⇪ Предай', submitTitle: 'Подготви предаване', send: 'Пусни',
+    submitHint: 'Постави линка или пътя до файла за предаване.\nРедове, започващи с #, се пропускат.',
+    submitQueued: 'Предаването е пуснато. Claude ще го попълни в Brightspace и ще спре на бутона Submit — ти го натискаш.',
+    submitEmpty: 'Няма какво да се предаде.',
+    solveCopied: 'Копирано за Claude — поднеси го в чата. Записано като',
+    solveSaved: 'Записано за Claude като',
+    promptTitle: 'Поднеси това на Claude', copy: 'Копирай', close: 'Затвори',
+    askPlaceholder: 'Питай Claude за всичко това…', askSend: 'Питай',
+    queued: 'Пуснато. Claude отговаря от чата — отговорът излиза тук и се прочита.',
+    waitingFor: (n, t) => (n === 1 ? '⋯ чакам' : `⋯ чакам ${n}`) +
+      ` · ${t} · кликни за как се отговаря`,
+    answered: 'Claude отговори:',
+    pendingTitle: 'Въпроси, които чакат отговор',
+    pendingHelp: 'Таблото не отговаря само — Claude отговаря, от чата, и отговорът излиза '
+      + 'тук до четири секунди.\n'
+      + 'Поднеси реда отдолу в чата, или го пусни в терминал в папката на проекта.\n'
+      + 'Ако искаш да зарежеш въпроса, натисни Отказ.',
+    cancelPending: 'Откажи най-стария',
+    updated: (id, s) => `Обновено: ${id} → ${s}`,
+    noAnswer: 'Сървърът не отговори.', voiceFail: 'Гласът не тръгна: ',
+    syncing: 'Проверявам Brightspace за нови неща…',
+    syncFresh: 'Brightspace е проверяван скоро — няма какво да се проверява.',
+    syncNoWatcher: 'Проверката е в опашката, но няма отворена Claude сесия, която да я поеме. '
+      + 'Отвори чат и тя тръгва — таблото няма своя сесия в Brightspace.',
+    brief: 'Какво трябва да направиш',
+    briefFrom: 'от',
+    spokenIntro: 'Между другото, проверих и Brightspace.',
+    spokenMoved: (t, when) => `Срокът на ${t} се мести на ${when}.`,
+    spokenNewFolder: (t, when) => `Има нова папка за предаване: ${t}${when ? ', до ' + when : ''}.`,
+    spokenNews: (t) => `Ново съобщение: ${t}.`,
+    syncFailedSpoken: 'Не успях да стигна до Brightspace, така че този репорт е от последната проверка, не от сега.',
+    loginBtn: 'Влез',
+    loginOpening: 'Отваря се прозорец на Chrome. Обикновено влиза сам и няма какво '
+      + 'да правиш; ако все пак поиска, влез там и чекни „Stay signed in".',
+    syncNothingNew: 'Brightspace е проверен — няма нищо ново.',
+    syncFailed: (m) => `Не успях да проверя Brightspace: ${m}`,
+    syncMoved: (t, to) => `⚠ Сменен срок: ${t} → ${to}`,
+    syncNewFolder: (t, due) => `Нова папка за предаване: ${t}${due ? ' (' + due + ')' : ''}`,
+    syncNews: (t) => `Ново съобщение: ${t}`,
+    staleWarn: (age) => `⚠ Brightspace проверен ${age}`,
+    tapToPlay: '▶ Chrome блокира звука — натисни тук',
+    blockedAudio: 'Chrome отказа да пусне звука сам. Репортът е готов — натисни жълтия бутон.',
+    stopped: 'Спрях.', overdueBy: (n) => `Просрочена с ${n} дни.`,
+    dueToday: 'Крайният срок е днес.', daysLeft: (n) => `Остават ${n} дни.`,
+    translatedNote: 'оригинал',
+    tabNews: (n) => n ? `Новини (${n})` : 'Новини', noNews: 'Още няма съобщения',
+    unknownCmd: 'Това още не го мога.',
+    offline: '✕ Приложението не отговаря — пусни го отново. Опитвам пак…',
+    briefMissing: 'Заданието за тази задача още не е извадено от Brightspace.',
+    briefMissingNoAi: 'Отвори заданието в Brightspace за пълния текст — тази ранна версия следи сроковете, не текста на заданието.',
+    syncSetup: 'Още няма избран курс — отвори Настройки (⚙) и си избери курсовете.',
+    syncLogin: 'Входът в Brightspace е изтекъл — издържа около денонощие. '
+      + 'Този репорт е от последната проверка, не от сега.',
+    suTitle: 'Настрой асистента си', suName: 'Как се казва асистентът ти?',
+    suAddr: 'Как да се обръща към теб? (по желание — напр. сър, шефе, името ти)',
+    suUrl: 'Адресът на твоя Brightspace',
+    suBsText: '1. Отвори прозореца за вход и влез с училищния си акаунт — паролата отива при училището, никога в това приложение. 2. Върни се и намери курсовете си. 3. Отметни тези, които да следи.',
+    suLogin: '1 · Отвори прозореца за вход', suFind: '2 · Намери курсовете ми',
+    suFinding: 'Питам Brightspace за курсовете ти…',
+    suNeedLogin: 'Още не си влязъл. Довърши входа в прозореца на браузъра и натисни пак.',
+    suNoBrowser: 'На този компютър няма нито Chrome, нито Edge. Инсталирай Chrome и опитай пак.',
+    suFound: (n) => `Намерени курсове: ${n} — отметни кои да следи.`,
+    suFail: (m) => `Не можах да взема курсовете: ${m}`,
+    suSave: 'Запази', suSaved: 'Записано.', suPickOne: 'Отметни поне един курс.',
+    suNameMissing: 'Дай име на асистента.',
+    suPhoneText: 'На телефона: той отваря същото табло от този компютър, през същата Wi-Fi мрежа. Компютърът трябва да е включен. Училищни мрежи като eduroam обикновено блокират това; домашната Wi-Fi работи.',
+    suPhoneOn: 'Достъп от телефон: ВКЛ — изключи', suPhoneOff: 'Достъп от телефон: ИЗКЛ — включи',
+    suPhoneRestart: 'Затвори приложението и го пусни отново, за да заработи.',
+    suPhoneOpen: 'На телефона отвори:', suPhoneCode: 'и въведи този код:',
+    suPhoneDevices: (n) => `Сдвоени устройства: ${n}`,
+    fbTitle: 'Кажи какво мислиш', fbLiked: 'Какво ти свърши работа?',
+    fbAnnoyed: 'Какво пречеше или се счупи?',
+    fbQuote: 'С едно изречение — какво би казал на състудент за него?',
+    fbName: 'Името ти (по желание)',
+    fbMay: 'Може да цитирате изречението ми публично, с малкото ми име.',
+    fbSend: 'Изпрати', fbEmpty: 'Напиши нещо или дай оценка.',
+    fbSaved: 'Благодаря — записано.', fbMail: 'Отваря се пощата ти с попълнен текст. Натисни Изпрати там.',
+    fbCopyTitle: 'Прати това на човека, който ти даде приложението',
+    updReady: (v, n) => `Обновление ${v} е свалено — затвори приложението и го отвори пак, за да го ползваш.` + (n ? ` Какво е ново: ${n}` : ''),
+    updNeedsDownload: (v) => `Версия ${v} иска ново сваляне — това копие е твърде старо, за да се обнови само.`,
+    updRolledBack: (v) => `Обновление ${v} не тръгна правилно, затова върви предишната версия. Нищо не е загубено.`,
+    tabSched: 'Разписание', noSched: 'Няма часове през следващите две седмици или Teams не е свързан.',
+    schedToday: 'Днес', schedTomorrow: 'Утре', schedOnline: 'онлайн',
+    suTeams: 'Разписание от Teams (по желание)',
+    suTeamsText: 'Показвай и часовете си от календара на Teams. Чете само разписанието ти — нищо не се праща, публикува или променя в Teams. Влез със същия бутон горе; първия път може да се отвори таб на Teams, за да довършиш входа.',
+    suTeamsOn: 'Teams: ВКЛ — изключи', suTeamsOff: 'Teams: ИЗКЛ — включи',
+  },
+};
+
+let LANG = localStorage.getItem('jarvis-lang') || 'en';
+let LANGS = [{ code: 'en', label: 'English', recognition: 'en-US' },
+             { code: 'bg', label: 'Български', recognition: 'bg-BG' }];
+let STATE = null, recog = null, listening = false, retryTimer = null;
+let VIEW = 'active';                       // which tab the task list is showing
+const T = (k) => (I18N[LANG] || I18N.en)[k];
+
+function applyStatic() {
+  document.documentElement.lang = LANG;
+  $('mic').textContent = listening ? T('micLive') : T('mic');
+  $('report').dataset.label = T('report');
+  if (speech.key !== 'report') $('report').textContent = T('report');
+  $('modal-copy').textContent = T('copy');
+  $('modal-close').textContent = T('close');
+  $('modal-cancel').textContent = T('cancelPending');
+  $('modal-send').textContent = T('send');
+  $('tap').textContent = T('tapToPlay');
+  $('ask-input').placeholder = T('askPlaceholder');
+  $('ask-send').textContent = T('askSend');
+  applyTabs();
+  $('l-open').textContent = T('open');
+  $('l-over').textContent = T('overdue');
+  $('l-week').textContent = T('week');
+  $('l-done').textContent = T('done');
+  $('offline').textContent = T('offline');
+  applyForms();
+  const next = LANGS[(LANGS.findIndex(l => l.code === LANG) + 1) % LANGS.length];
+  $('lang').textContent = next.code.toUpperCase();
+  $('lang').title = 'Switch to ' + next.label;
+}
+
+async function setLang(code) {
+  LANG = code;
+  try { localStorage.setItem('jarvis-lang', code); } catch (e) {}
+  if (recog) recog.lang = (LANGS.find(l => l.code === code) || {}).recognition || 'en-US';
+  applyStatic();
+  await load();
+}
+
+/* ------------------------------------------------ clock + countdown */
+function tick() {
+  $('clock').textContent = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  paintCountdown();
+  renderWaiting();          // so the "waiting 2m 14s" counter actually moves
+}
+
+function paintCountdown() {
+  const d = STATE && STATE.next_deadline;
+  const prog = $('prog'), big = $('big'), unit = $('unit');
+  if (!d) {
+    prog.style.strokeDashoffset = C;
+    big.textContent = '—'; big.className = 'big';
+    unit.textContent = T('noDeadline');
+    $('dl-title').textContent = T('noUpcoming');
+    $('dl-when').textContent = '';
+    return;
+  }
+  const due = new Date(d.due);
+  const ms = due - new Date();
+  const days = ms / 86400000;
+
+  let n, label;
+  if (ms < 0)            { n = Math.ceil(-days); label = n === 1 ? T('dayLate') : T('daysLate'); }
+  else if (days >= 2)    { n = Math.ceil(days);  label = n === 1 ? T('day') : T('days'); }
+  else if (ms >= 3600e3) { n = Math.floor(ms / 3600e3); label = n === 1 ? T('hour') : T('hours'); }
+  else                   { n = Math.max(0, Math.floor(ms / 60e3)); label = T('minutes'); }
+
+  const cls = ms < 0 || days < 3 ? 'crit' : days < 7 ? 'warn' : '';
+  big.textContent = n;
+  big.className = 'big ' + cls;
+  unit.textContent = label;
+
+  const filled = Math.max(0, Math.min(1, 1 - days / 14));
+  prog.style.strokeDashoffset = C * (1 - filled);
+  prog.style.stroke = ms < 0 || days < 3 ? 'var(--red)' : days < 7 ? 'var(--amber)' : 'var(--cyan)';
+
+  $('dl-title').textContent = d.title;
+  $('dl-when').textContent = due.toLocaleString(T('locale'),
+    { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: T('hour12') });
+}
+
+(function ticks() {
+  let out = '';
+  for (let i = 0; i < 60; i++) {
+    const a = (i / 60) * Math.PI * 2, r1 = 134, r2 = i % 5 === 0 ? 126 : 130;
+    out += `<line x1="${134 + Math.cos(a) * r1}" y1="${134 + Math.sin(a) * r1}"
+                  x2="${134 + Math.cos(a) * r2}" y2="${134 + Math.sin(a) * r2}"/>`;
+  }
+  $('ticks').innerHTML = out;
+})();
+
+/* ------------------------------------------------ state + tasks */
+function setOffline(on) {
+  document.body.classList.toggle('is-offline', on);
+  clearTimeout(retryTimer);
+  if (on) retryTimer = setTimeout(() => load(), 3000);
+}
+
+async function load(focusId) {
+  let data;
+  try {
+    const r = await fetch('/api/state?lang=' + LANG);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+  } catch (e) {
+    setOffline(true);
+    return;
+  }
+  setOffline(false);
+  STATE = data;
+  applyProfile();
+  $('course').textContent = STATE.course;
+  const f = STATE.freshness || {};
+  $('sync').textContent = STATE.last_sync
+    ? T('synced') + ' ' + new Date(STATE.last_sync).toLocaleString(T('locale'),
+        { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+      + (f.stale ? '  ⚠' : '')
+    : T('neverSynced');
+  // stale data looks the same as fresh data unless something says otherwise
+  $('sync').style.color = f.stale ? 'var(--amber)' : '';
+  $('s-open').textContent = STATE.counts.open;
+  $('s-over').textContent = STATE.counts.overdue;
+  $('s-week').textContent = STATE.counts.week;
+  $('s-done').textContent = STATE.counts.done;
+  applyTabs();
+  renderTasks(focusId);
+  paintCountdown();
+}
+
+function applyTabs() {
+  $('tab-active').textContent = T('tabActive');
+  $('tab-done').textContent = T('tabDone')(STATE ? (STATE.done || []).length : 0);
+  const unseen = STATE ? (STATE.announcements || []).filter(n => !n.seen).length : 0;
+  $('tab-news').textContent = T('tabNews')(unseen);
+  $('tab-sched').textContent = T('tabSched');
+  $('tab-sched').hidden = !(STATE && (STATE.features || {}).teams);
+  $('tab-sched').classList.toggle('on', VIEW === 'sched');
+  $('tab-news').style.color = unseen ? 'var(--amber)' : '';
+  $('tab-active').classList.toggle('on', VIEW === 'active');
+  $('tab-done').classList.toggle('on', VIEW === 'done');
+  $('tab-news').classList.toggle('on', VIEW === 'news');
+}
+
+/* The name is the user's own. JARVIS is only what it is called until they change it,
+   and it keeps its dotted spelling because that is how the original was drawn. */
+let setupOffered = false;
+function applyProfile() {
+  const a = STATE.assistant || {};
+  const name = (a.name || 'JARVIS').toUpperCase();
+  $('brand').textContent = name === 'JARVIS' ? 'J.A.R.V.I.S' : name;
+  $('brand-org').textContent = STATE.org || '';
+  document.title = (a.name || 'JARVIS') + (STATE.org ? ' — ' + STATE.org : '');
+  document.body.classList.toggle('no-ai', !(STATE.features || {}).ai);
+  if (!a.onboarded && !setupOffered) { setupOffered = true; openSetup(); }
+}
+
+function renderSchedule() {
+  const box = $('tasks');
+  const rows = (STATE.schedule || []).filter(e => e.start);
+  if (!rows.length) { box.innerHTML = `<div class="empty">${T('noSched')}</div>`; return; }
+  const dayKey = iso => new Date(iso).toDateString();
+  const today = new Date().toDateString();
+  const tomorrow = new Date(Date.now() + 86400000).toDateString();
+  let out = '', lastDay = null;
+  for (const e of rows) {
+    const k = dayKey(e.start);
+    if (k !== lastDay) {
+      lastDay = k;
+      const d = new Date(e.start);
+      const label = k === today ? T('schedToday') : k === tomorrow ? T('schedTomorrow')
+        : d.toLocaleDateString(T('locale'), { weekday: 'long', day: 'numeric', month: 'short' });
+      out += `<h4 style="margin:14px 0 6px">${esc(label)}</h4>`;
+    }
+    const t0 = e.all_day ? '' : new Date(e.start).toLocaleTimeString(T('locale'),
+      { hour: '2-digit', minute: '2-digit', hour12: T('hour12') });
+    const t1 = (e.all_day || !e.end) ? '' : new Date(e.end).toLocaleTimeString(T('locale'),
+      { hour: '2-digit', minute: '2-digit', hour12: T('hour12') });
+    out += `<div class="news">
+      <h5>${esc(e.title || '')}</h5>
+      <div class="meta">${esc([t0 && t1 ? t0 + '–' + t1 : t0,
+        e.where, e.online ? T('schedOnline') : ''].filter(Boolean).join('  ·  '))}</div>
+    </div>`;
+  }
+  box.innerHTML = out;
+}
+
+function renderNews() {
+  const box = $('tasks');
+  const rows = STATE.announcements || [];
+  if (!rows.length) { box.innerHTML = `<div class="empty">${T('noNews')}</div>`; return; }
+  box.innerHTML = rows.map(n => `
+    <div class="news ${n.seen ? '' : 'unseen'}">
+      <h5>${esc(n.title)}</h5>
+      <div class="meta">${esc(stampOf(n.when) || '')}</div>
+      <div class="body">${esc(n.body)}</div>
+    </div>`).join('');
+  if (rows.some(n => !n.seen)) {
+    fetch('/api/news/seen', { method: 'POST' }).then(() => {
+      rows.forEach(n => { n.seen = true; });
+      applyTabs();
+    }).catch(() => {});
+  }
+}
+
+function setView(v) {
+  VIEW = v;
+  applyTabs();
+  if (STATE) renderTasks();
+}
+
+function dueChip(t) {
+  if (t.days_left === null) return `<span class="chip">${T('chipNone')}</span>`;
+  const d = t.days_left;
+  const cls = d <= 3 ? 'crit' : d <= 7 ? 'warn' : '';
+  const txt = d < 0 ? T('chipLate')(-d) : d === 0 ? T('chipToday') : d === 1 ? T('chipTomorrow') : T('chipIn')(d);
+  return `<span class="chip due ${cls}">${txt}</span>`;
+}
+
+function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function list(title, items) {
+  if (!items || !items.length) return '';
+  return `<h4>${title}</h4><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`;
+}
+
+function taskById(id) {
+  return (STATE.tasks || []).concat(STATE.done || []).find(x => x.id === id);
+}
+
+function renderTasks(focusId) {
+  if (VIEW === 'news') return renderNews();
+  if (VIEW === 'sched') return renderSchedule();
+  const box = $('tasks');
+  const done = VIEW === 'done';
+  const rows = done ? (STATE.done || []) : (STATE.tasks || []);
+  if (!rows.length) {
+    box.innerHTML = `<div class="empty">${done ? T('noneDone') : T('empty')}</div>`;
+    return;
+  }
+  box.innerHTML = rows.map(t => {
+    const d = t.days_left;
+    const cls = done ? 'is-done'
+      : d !== null && d <= 3 ? 'crit' : d !== null && d <= 7 ? 'warn' : '';
+    const links = (t.resources || []).map(r =>
+      `<li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></li>`).join('');
+    const subs = (t.submissions || []).map(s => `
+      <div class="submission">
+        <div class="when">${esc(stampOf(s.at) || '')}</div>
+        <div>${esc(s.what || '')}</div>
+      </div>`).join('');
+    return `
+    <div class="task ${cls}" data-id="${t.id}">
+      <div class="task-head">
+        <span class="task-title">${esc(t.title)}</span>
+        ${t.weight ? `<span class="chip">${esc(String(t.weight).replace(/\s*\([^)]*\)/, ''))}</span>` : ''}
+        ${done
+          ? `<span class="chip ok">${T('completedOn')} ${esc(stampOf(t.completed) || '')}</span>`
+          : (t.status !== 'todo' ? `<span class="chip status-${t.status}">${t.status}</span>` : '') + dueChip(t)}
+      </div>
+      <div class="task-body">
+        ${t.description ? `<p>${esc(t.description)}</p>` : ''}
+        ${t.instructions ? `<h4>${T('brief')}</h4>
+          <div class="brief">${esc(t.instructions)}</div>
+          ${t.instructions_source
+            ? `<div class="brief-src">${T('briefFrom')} ${esc(t.instructions_source)}</div>` : ''}`
+          : `<div class="brief-missing">${T((STATE.features || {}).ai ? 'briefMissing' : 'briefMissingNoAi')}</div>`}
+        ${subs ? `<h4>${T('submittedLabel')}</h4>${subs}` : ''}
+        ${list(T('handIn'), t.deliverables)}
+        ${list(T('reqs'), t.requirements)}
+        ${links ? `<h4>${T('materials')}</h4><ul>${links}</ul>` : ''}
+        <h4>${T('files')}</h4>
+        <div class="files" data-files="${t.id}"></div>
+        <label class="filebtn">${T('attach')}
+          <input type="file" multiple hidden data-upload="${t.id}">
+        </label>
+        <div class="task-actions">
+          ${done
+            ? `<button data-act="todo">${T('reopen')}</button>`
+            : `<button data-act="in_progress">${T('start')}</button>
+               <button data-act="done">${T('markDone')}</button>
+               <button data-act="blocked">${T('blocked')}</button>`}
+          <button data-act="speak" data-label="${T('read')}">${T('read')}</button>
+          <button class="solve ai-only" data-act="solve">${T('solve')}</button>
+          ${done ? '' : `<button class="solve ai-only" data-act="submit">${T('submit')}</button>`}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.task').forEach(el => {
+    el.addEventListener('click', e => {
+      if (['BUTTON', 'A', 'INPUT', 'LABEL'].includes(e.target.tagName)) return;
+      el.classList.toggle('open');
+      if (el.classList.contains('open')) renderFiles(el.dataset.id);   // only when looked at
+    });
+    const picker = el.querySelector('input[type="file"]');
+    if (picker) picker.addEventListener('change', () => {
+      attachFiles(picker.dataset.upload, picker.files, picker.closest('.filebtn'));
+      picker.value = '';
+    });
+    el.querySelectorAll('button').forEach(b => b.addEventListener('click', async () => {
+      const id = el.dataset.id, act = b.dataset.act;
+      if (act === 'speak') return speakTask(taskById(id), b);
+      if (act === 'solve') return solve(id, b);
+      if (act === 'submit') return prepareSubmission(id, b);
+      try {
+        const r = await fetch(`/api/task/${encodeURIComponent(id)}?lang=${LANG}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: act })
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        log('me', T('updated')(id, act));
+        load();
+      } catch (e) { log('err', T('noAnswer')); setOffline(true); }
+    }));
+  });
+
+  // the refresh rebuilt every button — re-attach the one that is currently speaking,
+  // otherwise it silently reverts to "Read" while the audio keeps playing
+  if (speech.key && speech.key.startsWith('task:')) {
+    const b = box.querySelector(
+      `.task[data-id="${CSS.escape(speech.key.slice(5))}"] button[data-act="speak"]`);
+    if (b) { speech.btn = b; markBtn(b, $('player').paused ? 'busy' : 'playing'); }
+  }
+
+  if (focusId) {
+    const el = box.querySelector(`[data-id="${CSS.escape(focusId)}"]`);
+    if (el) { el.classList.add('flash', 'open'); el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  }
+}
+
+function speakTask(t, btn) {
+  if (!t) return;
+  const parts = [t.title + '.'];
+  if (t.days_left !== null) parts.push(
+    t.days_left < 0 ? T('overdueBy')(-t.days_left) :
+    t.days_left === 0 ? T('dueToday') : T('daysLeft')(t.days_left));
+  if (t.description) parts.push(t.description);
+  (t.deliverables || []).forEach(d => parts.push(T('handIn') + ': ' + d));
+  (t.requirements || []).forEach(r => parts.push(r));
+  say(parts.join(' '), { btn, key: 'task:' + t.id });
+}
+
+/* ------------------------------------------------ log + speech out */
+function stampOf(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString(T('locale'),
+    { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+/* Same as log(), plus a button. Used when the message is not just news but something
+   the user has to act on - a dead Brightspace session, which happens about daily. */
+function logAction(who, text, label, onClick) {
+  log(who, text);
+  const p = $('log').firstChild;
+  const b = document.createElement('button');
+  b.className = 'loginbtn';
+  b.textContent = label;
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { await fetch('/api/cdp/login', { method: 'POST' }); log('me', T('loginOpening')); }
+    catch (e) { log('err', T('noAnswer')); }
+    if (onClick) onClick();
+  });
+  p.appendChild(document.createTextNode(' '));
+  p.appendChild(b);
+}
+
+function log(who, text, when) {
+  const p = document.createElement('p');
+  p.className = who;
+  const stamp = stampOf(when);
+  if (stamp) {
+    const s = document.createElement('span');
+    s.className = 'ts';
+    s.textContent = stamp + '  ';
+    p.appendChild(s);
+  }
+  p.appendChild(document.createTextNode(
+    (who === 'you' ? '▸ ' : who === 'err' ? '✕ ' : '◂ ') + text));
+  $('log').prepend(p);
+  while ($('log').children.length > 150) $('log').lastChild.remove();
+}
+
+/* The transcript used to start empty on every load, so anything asked before a reload
+   looked like it had never happened. The questions and answers live on disk, so the
+   conversation can simply be read back. */
+async function loadHistory() {
+  try {
+    const r = await fetch('/api/ask?limit=25');
+    if (!r.ok) return;
+    const j = await r.json();
+    for (const q of (j.questions || []).slice().reverse()) {   // API is newest first
+      log('you', q.question, q.asked_at);
+      if (q.status === 'answered' && q.answer) {
+        log('me', T('answered') + ' ' + q.answer, q.answered_at);
+      }
+    }
+  } catch (e) { /* offline banner covers it */ }
+}
+
+/* One speech at a time, with the wait visible on the control you pressed.
+   Before this, the first synthesis took several seconds with no feedback anywhere, so
+   people pressed again — and the second press restarted the audio from zero. That is
+   the "it starts and then stops". */
+const speech = { seq: 0, ctrl: null, btn: null, key: null };
+
+/* Chrome only lets a page start audio while it still holds a user gesture, and that
+   permission expires after a few seconds. Synthesising a fresh brief takes four to
+   eight, so by the time the MP3 arrives the click has gone stale and play() is
+   rejected — silently, from the user's point of view. Playing a zero-length silent
+   file on the very first touch marks the element as user-initiated for good; every
+   later play() on the same element is then allowed however long the wait was. */
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+let audioUnlocked = false;
+
+function unlockAudio() {
+  if (audioUnlocked) return;
+  const p = $('player');
+  if (p.src && !p.paused) { audioUnlocked = true; return; }
+  p.src = SILENT_WAV;
+  const r = p.play();
+  if (r && r.then) {
+    r.then(() => {
+      audioUnlocked = true;
+      p.pause();
+      p.removeAttribute('src');
+      p.load();
+    }).catch(() => { /* still blocked; the amber button is the fallback */ });
+  }
+}
+
+function showTap(on) {
+  const b = $('tap');
+  b.hidden = !on;
+  if (on) log('err', T('blockedAudio'));
+}
+
+function markBtn(btn, state) {
+  if (!btn || !btn.isConnected) return;
+  btn.classList.toggle('busy', state === 'busy');
+  btn.classList.toggle('playing', state === 'playing');
+  btn.textContent = state === 'busy' ? T('preparing')
+    : state === 'playing' ? T('stopRead')
+    : (btn.dataset.label || T('read'));
+}
+
+function stopSpeech() {
+  speech.seq++;
+  if (speech.ctrl) { try { speech.ctrl.abort(); } catch (e) {} speech.ctrl = null; }
+  $('player').pause();
+  markBtn(speech.btn, null);
+  speech.btn = null; speech.key = null;
+}
+
+async function say(text, { btn = null, key = null } = {}) {
+  if (key && speech.key === key) { stopSpeech(); return; }   // press again = stop
+  stopSpeech();
+  const seq = ++speech.seq;
+  const ctrl = new AbortController();
+  speech.btn = btn; speech.key = key; speech.ctrl = ctrl;
+  markBtn(btn, 'busy');
+  try {
+    const r = await fetch('/api/speak', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, lang: LANG }), signal: ctrl.signal
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (seq !== speech.seq) return;                          // superseded while waiting
+    const p = $('player');
+    p.src = j.url;
+    try {
+      await p.play();
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') {
+        // the MP3 is loaded and ready; it just needs a fresh click to start
+        showTap(true);
+        markBtn(btn, null);
+        speech.btn = null; speech.key = null;
+        return;
+      }
+      throw err;
+    }
+    if (seq !== speech.seq) return;
+    showTap(false);
+    markBtn(btn, 'playing');
+  } catch (e) {
+    if (e.name === 'AbortError' || seq !== speech.seq) return;
+    log('err', T('voiceFail') + e.message);
+    reportVoiceTrouble();
+    markBtn(btn, null);
+    speech.btn = null; speech.key = null;
+  } finally {
+    if (speech.ctrl === ctrl) speech.ctrl = null;
+  }
+}
+
+/* "Voice failed: NotSupportedError" tells nobody anything. When playback breaks, ask the
+   server what actually went wrong — it knows the difference between no internet and a
+   voice library that needs updating, and the fix is usually one command. */
+let voiceToldAt = 0;
+async function reportVoiceTrouble() {
+  if (Date.now() - voiceToldAt < 30000) return;     // one explanation, not one per click
+  voiceToldAt = Date.now();
+  try {
+    const r = await fetch('/api/voice/health');
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.ok) log('err', j.why + ' ' + j.hint);
+  } catch (e) { /* the offline banner covers this */ }
+}
+
+$('player').addEventListener('error', () => {
+  // a stream that dies mid-play never reaches say()'s catch
+  if (speech.key) reportVoiceTrouble();
+});
+
+$('player').addEventListener('ended', () => {
+  markBtn(speech.btn, null);
+  speech.btn = null; speech.key = null;
+});
+
+/* ------------------------------------------------ ask Claude, from here
+   Hearing the report and then having to leave the app to ask about it is the
+   friction this removes. The question is queued on disk; Claude answers it from the
+   chat with `python tools/ask.py answer <id>`, and the answer lands back here and is
+   read aloud. The dashboard still does not think — it just carries the question. */
+const waiting = new Map();
+let askTimer = null;
+
+function elapsed(since) {
+  const s = Math.max(0, Math.round((Date.now() - since) / 1000));
+  return s < 60 ? s + 's' : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+function renderWaiting() {
+  const el = $('ask-status');
+  if (!waiting.size) { el.textContent = ''; el.style.cursor = ''; return; }
+  const oldest = Math.min(...[...waiting.values()].map(w => w.since));
+  el.textContent = T('waitingFor')(waiting.size, elapsed(oldest));
+  el.style.cursor = 'pointer';
+}
+
+function watchAnswer(id, question, since, taskId) {
+  if (waiting.has(id)) return;
+  waiting.set(id, { question, since: since || Date.now(), taskId: taskId || null });
+  renderWaiting();
+  if (!askTimer) askTimer = setInterval(renderWaiting, 1000);   // just the clock, no network
+  longPoll(id);
+}
+
+/* The page used to ask "is it answered yet?" every four seconds, so an answer could sit
+   written for four seconds before it appeared. Now the request is held open on the
+   server and comes back the moment the answer is written. */
+async function longPoll(id) {
+  while (waiting.has(id)) {
+    let j;
+    try {
+      const r = await fetch(`/api/ask/${encodeURIComponent(id)}/wait?timeout=25`);
+      if (r.status === 404) { waiting.delete(id); renderWaiting(); return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      j = await r.json();
+    } catch (e) {
+      await new Promise(res => setTimeout(res, 2000));          // offline; back off
+      continue;
+    }
+    if (j.status === 'answered' && j.answer) {
+      const w = waiting.get(id);
+      waiting.delete(id);
+      renderWaiting();
+      if (!waiting.size && askTimer) { clearInterval(askTimer); askTimer = null; }
+      log('me', T('answered') + ' ' + j.answer, j.answered_at);
+      say(j.answer, { btn: $('report'), key: 'answer:' + id });
+      // a solve or a submission also changes what is on disk for that task
+      if (w && w.taskId) { await load(); await renderFiles(w.taskId); }
+      return;
+    }
+  }
+}
+
+/* A question left pending used to vanish on reload — `waiting` lived only in the page,
+   so the status line disappeared while the question sat in the queue for ever. Pick the
+   pending ones back up from the server on every load. */
+async function resumePending() {
+  try {
+    const r = await fetch('/api/ask?status=pending');
+    if (!r.ok) return;
+    const j = await r.json();
+    for (const q of j.questions || []) {
+      if (!waiting.has(q.id)) watchAnswer(q.id, q.question, Date.parse(q.asked_at) || Date.now());
+    }
+  } catch (e) { /* offline banner covers it */ }
+}
+
+function showPending() {
+  if (!waiting.size) return;
+  const lines = [...waiting.entries()]
+    .sort((a, b) => a[1].since - b[1].since)
+    .map(([id, w]) => `${w.question}\n\npython tools/ask.py answer ${id} --text "your answer"`);
+  showPrompt(T('pendingTitle'), T('pendingHelp') + '\n\n' + '─'.repeat(48) + '\n\n'
+    + lines.join('\n\n' + '─'.repeat(48) + '\n\n'));
+  $('modal-cancel').hidden = false;
+}
+
+async function cancelOldest() {
+  if (!waiting.size) return;
+  const [id] = [...waiting.entries()].sort((a, b) => a[1].since - b[1].since)[0];
+  try { await fetch('/api/ask/' + encodeURIComponent(id), { method: 'DELETE' }); } catch (e) {}
+  waiting.delete(id);
+  renderWaiting();
+  $('modal').classList.remove('on');
+  log('me', T('cancelPending') + ': ' + id);
+}
+
+async function askQuestion(text) {
+  text = (text || '').trim();
+  if (!text) return;
+  log('you', text);
+  try {
+    const r = await fetch('/api/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, lang: LANG })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    watchAnswer(j.id, text, Date.now());
+    log('me', T('queued'));
+  } catch (e) {
+    log('err', T('noAnswer'));
+    setOffline(true);
+  }
+}
+
+/* ------------------------------------------------ hand a task to Claude */
+let modalSend = null;
+
+function showPrompt(title, text) {
+  $('modal-title').textContent = title;
+  $('modal-text').value = text;
+  $('modal-text').readOnly = true;
+  $('modal-cancel').hidden = true;
+  $('modal-send').hidden = true;
+  modalSend = null;
+  $('modal').classList.add('on');
+  $('modal-text').focus();
+  $('modal-text').select();
+}
+
+function showInput(title, prefill, onSend) {
+  $('modal-title').textContent = title;
+  $('modal-text').value = prefill || '';
+  $('modal-text').readOnly = false;
+  $('modal-cancel').hidden = true;
+  $('modal-send').hidden = false;
+  modalSend = onSend;
+  $('modal').classList.add('on');
+  $('modal-text').focus();
+}
+
+async function prepareSubmission(id, btn) {
+  const t = taskById(id);
+  if (!t) return;
+  let attached = [];
+  try {
+    const r = await fetch('/api/files/' + encodeURIComponent(id));
+    if (r.ok) attached = (await r.json()).attachments || [];
+  } catch (e) {}
+  const hint = (t.deliverables || []).map(d => '# ' + d).join('\n');
+  const prefill = attached.length
+    ? attached.map(f => f.name).join('\n')
+    : T('submitHint');
+  showInput(T('submitTitle') + ' — ' + t.title,
+    (hint ? hint + '\n\n' : '') + prefill,
+    async (value) => {
+      const what = value.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).join('\n').trim();
+      if (!what) { log('err', T('submitEmpty')); return; }
+      try {
+        const r = await fetch('/api/submit', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_id: id, what, lang: LANG })
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        watchAnswer(j.queued, T('submitQueued'), Date.now(), id);
+        log('me', T('submitQueued'));
+        $('modal').classList.remove('on');
+        await load();
+      } catch (e) { log('err', T('noAnswer')); setOffline(true); }
+    });
+}
+
+/* Files sitting on a task: what Claude wrote, and what you have attached to hand in. */
+function fmtSize(n) {
+  return n < 1024 ? n + ' B' : n < 1024 * 1024 ? Math.round(n / 1024) + ' KB'
+    : (n / 1048576).toFixed(1) + ' MB';
+}
+
+async function renderFiles(taskId) {
+  const box = document.querySelector(`[data-files="${CSS.escape(taskId)}"]`);
+  if (!box) return;
+  let j;
+  try {
+    const r = await fetch('/api/files/' + encodeURIComponent(taskId));
+    if (!r.ok) return;
+    j = await r.json();
+  } catch (e) { return; }
+  const row = (f, cls) => `
+    <div class="file ${cls}">
+      <a href="${esc(f.url)}" download>${esc(f.name)}</a>
+      <span class="meta">${fmtSize(f.size)}</span>
+      ${cls === 'att' ? `<button class="rm" data-rm="${esc(f.name)}" title="${T('remove')}">✕</button>` : ''}
+    </div>`;
+  const parts = [];
+  if (j.solution.length) parts.push(`<div class="meta">${T('solutionLabel')}</div>`,
+    ...j.solution.map(f => row(f, 'sol')));
+  if (j.attachments.length) parts.push(`<div class="meta">${T('attachLabel')}</div>`,
+    ...j.attachments.map(f => row(f, 'att')));
+  box.innerHTML = parts.length ? parts.join('') : `<div class="meta">${T('noFiles')}</div>`;
+
+  box.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      await fetch(`/api/files/${encodeURIComponent(taskId)}/attachments/`
+        + encodeURIComponent(b.dataset.rm), { method: 'DELETE' });
+    } catch (e) {}
+    renderFiles(taskId);
+  }));
+}
+
+async function attachFiles(taskId, fileList, label) {
+  if (!fileList || !fileList.length) return;
+  const fd = new FormData();
+  for (const f of fileList) fd.append('files', f, f.name);
+  if (label) { label.classList.add('busy'); label.firstChild.nodeValue = T('sending'); }
+  try {
+    const r = await fetch(`/api/files/${encodeURIComponent(taskId)}/attachments`,
+      { method: 'POST', body: fd });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (j.saved.length) log('me', T('uploaded')(j.saved.length) + ': ' + j.saved.join(', '));
+    if (j.skipped.length) log('err', T('uploadFail')
+      + j.skipped.map(s => `${s.name} (${s.why})`).join(', '));
+    await renderFiles(taskId);
+  } catch (e) {
+    log('err', T('noAnswer'));
+  } finally {
+    if (label) { label.classList.remove('busy'); label.firstChild.nodeValue = T('attach') + ' '; }
+  }
+}
+
+/* Solve now does the work instead of handing you a prompt to carry: it queues the task,
+   the watcher wakes Claude, and the finished file turns up in the list above. */
+async function solve(id, btn) {
+  btn.classList.add('busy');
+  btn.textContent = T('solving');
+  try {
+    const r = await fetch('/api/handoff', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: id, lang: LANG })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (j.queued) watchAnswer(j.queued, T('solving') + ' — ' + j.title, Date.now(), id);
+    log('me', T('solveQueued'));
+  } catch (e) {
+    log('err', T('noAnswer'));
+    setOffline(true);
+  } finally {
+    btn.classList.remove('busy');
+    btn.textContent = T('solve');
+  }
+}
+
+/* ------------------------------------------------ updates
+   The launcher downloads a newer version by itself, some seconds after the window opens.
+   Ask once at start and once a little later, and say it in the log — an update never
+   changes anything under a running session. */
+let updTold = '';
+async function checkUpdate() {
+  let u;
+  try { u = await (await fetch('/api/update')).json(); } catch (e) { return; }
+  $('open-setup').title = 'Settings · v' + (u.running || '?');
+  const key = u.state + ':' + (u.version || '');
+  if (key === updTold) return;
+  if (u.state === 'ready') { updTold = key; log('me', T('updReady')(u.version, u.notes || '')); }
+  else if (u.state === 'needs_download') {
+    updTold = key; log('err', T('updNeedsDownload')(u.version) + (u.url ? ' ' + u.url : ''));
+  } else if (u.state === 'rolled_back') { updTold = key; log('err', T('updRolledBack')(u.version)); }
+}
+
+/* ------------------------------------------------ setup
+   Asked once, and reachable again from ⚙. Nothing here ever sees a password: signing in
+   happens in the browser window that opens, on the school's own page. */
+let SETUP = null, FOUND = null;
+
+function applyForms() {
+  const set = (id, k) => { $(id).textContent = T(k); };
+  set('su-title', 'suTitle'); set('su-l-name', 'suName'); set('su-l-addr', 'suAddr');
+  set('su-l-url', 'suUrl'); set('su-bs-text', 'suBsText'); set('su-login', 'suLogin');
+  set('su-find', 'suFind'); set('su-save', 'suSave'); set('su-close', 'close');
+  set('su-phone-text', 'suPhoneText');
+  set('su-l-teams', 'suTeams'); set('su-teams-text', 'suTeamsText');
+  set('fb-title', 'fbTitle'); set('fb-l-liked', 'fbLiked'); set('fb-l-annoyed', 'fbAnnoyed');
+  set('fb-l-quote', 'fbQuote'); set('fb-l-name', 'fbName'); set('fb-l-may', 'fbMay');
+  set('fb-send', 'fbSend'); set('fb-close', 'close');
+}
+
+function paintCourses(rows, checked) {
+  // current courses first, finished ones dimmed at the bottom
+  const sorted = rows.slice().sort((a, b) => (b.active !== false) - (a.active !== false)
+    || String(a.name).localeCompare(String(b.name)));
+  $('su-courses').innerHTML = sorted.map(c => `
+    <label class="${c.active === false ? 'old' : ''}">
+      <input type="checkbox" value="${esc(String(c.org_unit_id))}"
+             data-name="${esc(c.name || '')}" ${checked.has(String(c.org_unit_id)) ? 'checked' : ''}>
+      <span>${esc(c.name || c.org_unit_id)}</span>
+    </label>`).join('');
+}
+
+async function openSetup() {
+  try { SETUP = await (await fetch('/api/setup')).json(); } catch (e) { return; }
+  FOUND = null;
+  $('su-name').value = SETUP.name || '';
+  $('su-addr').value = SETUP.address || '';
+  $('su-url').value = SETUP.base_url || '';
+  $('su-status').textContent = SETUP.browser && !SETUP.browser.found ? T('suNoBrowser') : '';
+  paintCourses(SETUP.courses || [], new Set((SETUP.courses || []).map(c => String(c.org_unit_id))));
+  paintTeamsToggle(!!SETUP.teams);
+  $('setup').classList.add('on');
+  paintPhone();
+}
+
+async function saveSetup(extra) {
+  const r = await fetch('/api/setup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(extra)
+  });
+  if (!r.ok) {
+    let why = 'HTTP ' + r.status;
+    try { why = (await r.json()).detail || why; } catch (e) {}
+    throw new Error(why);
+  }
+  return r.json();
+}
+
+$('su-login').addEventListener('click', async () => {
+  try {
+    await saveSetup({ base_url: $('su-url').value });      // so the window opens the right school
+    await fetch('/api/cdp/login', { method: 'POST' });
+    $('su-status').textContent = T('loginOpening');
+  } catch (e) { $('su-status').textContent = e.message; }
+});
+
+$('su-find').addEventListener('click', async () => {
+  $('su-status').textContent = T('suFinding');
+  $('su-find').disabled = true;
+  try {
+    await saveSetup({ base_url: $('su-url').value });
+    const j = await (await fetch('/api/setup/courses')).json();
+    if (!j.ok) {
+      $('su-status').textContent = j.reason === 'login' ? T('suNeedLogin')
+        : j.reason === 'chrome' ? T('suNoBrowser') : T('suFail')(j.message || j.reason);
+      return;
+    }
+    FOUND = j;
+    const already = new Set((SETUP.courses || []).map(c => String(c.org_unit_id)));
+    paintCourses(j.courses || [], already);
+    $('su-status').textContent = T('suFound')((j.courses || []).length);
+  } catch (e) {
+    $('su-status').textContent = T('suFail')(e.message);
+  } finally { $('su-find').disabled = false; }
+});
+
+$('su-save').addEventListener('click', async () => {
+  const name = $('su-name').value.trim();
+  if (!name) { $('su-status').textContent = T('suNameMissing'); return; }
+  const courses = [...$('su-courses').querySelectorAll('input:checked')]
+    .map(i => ({ org_unit_id: i.value, name: i.dataset.name }));
+  if (!courses.length) { $('su-status').textContent = T('suPickOne'); return; }
+  try {
+    await saveSetup({ name, address: $('su-addr').value, lang: LANG,
+                      base_url: $('su-url').value, courses, teams: teamsWanted,
+                      api_version: FOUND ? FOUND.le : null });
+    if (teamsWanted) fetch('/api/teams/sync', { method: 'POST' }).catch(() => {});
+    $('setup').classList.remove('on');
+    log('me', T('suSaved'));
+    await load();
+    requestSync({ force: true });
+  } catch (e) { $('su-status').textContent = e.message; }
+});
+
+async function paintPhone() {
+  let m;
+  try {
+    const r = await fetch('/api/mobile');
+    if (!r.ok) { $('su-phone').hidden = true; return; }    // this IS the phone
+    m = await r.json();
+  } catch (e) { return; }
+  $('su-phone').hidden = false;
+  $('su-phone-toggle').textContent = T(m.enabled ? 'suPhoneOn' : 'suPhoneOff');
+  $('su-phone-toggle').dataset.on = m.enabled ? '1' : '';
+  const info = $('su-phone-info');
+  info.textContent = '';
+  if (!m.enabled) return;
+  const line = (txt, cls) => {
+    const d = document.createElement('p'); d.textContent = txt;
+    if (cls) d.className = cls; info.appendChild(d);
+  };
+  if (!m.listening) { line(T('suPhoneRestart')); return; }
+  line(T('suPhoneOpen')); line(m.url || '?', 'paircode');
+  info.lastChild.style.fontSize = '15px'; info.lastChild.style.letterSpacing = '.04em';
+  line(T('suPhoneCode')); line(m.code || '------', 'paircode');
+  line(T('suPhoneDevices')(m.devices || 0));
+}
+
+$('su-phone-toggle').addEventListener('click', async () => {
+  const on = !$('su-phone-toggle').dataset.on;
+  try {
+    await fetch('/api/mobile', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify({ enabled: on }) });
+  } catch (e) {}
+  paintPhone();
+});
+
+let teamsWanted = false;
+function paintTeamsToggle(on) {
+  teamsWanted = on;
+  $('su-teams-toggle').textContent = T(on ? 'suTeamsOn' : 'suTeamsOff');
+  $('su-teams-toggle').dataset.on = on ? '1' : '';
+}
+$('su-teams-toggle').addEventListener('click', () => paintTeamsToggle(!$('su-teams-toggle').dataset.on));
+
+$('open-setup').addEventListener('click', openSetup);
+$('su-close').addEventListener('click', () => $('setup').classList.remove('on'));
+
+/* ------------------------------------------------ feedback
+   Saved on this computer. The app sends nothing anywhere by itself — it opens the
+   tester's own mail program with the text filled in, and they press Send. */
+let fbRating = 0;
+function paintStars() {
+  $('fb-stars').innerHTML = [1, 2, 3, 4, 5].map(n =>
+    `<button data-n="${n}" class="${n <= fbRating ? 'on' : ''}">★</button>`).join('');
+  $('fb-stars').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    fbRating = +b.dataset.n; paintStars();
+  }));
+}
+
+$('open-feedback').addEventListener('click', () => {
+  $('fb-status').textContent = '';
+  paintStars();
+  $('feedback').classList.add('on');
+});
+$('fb-close').addEventListener('click', () => $('feedback').classList.remove('on'));
+
+$('fb-send').addEventListener('click', async () => {
+  const body = { rating: fbRating || null, liked: $('fb-liked').value,
+                 annoyed: $('fb-annoyed').value, quote: $('fb-quote').value,
+                 name: $('fb-name').value, may_quote: $('fb-may').checked };
+  if (!body.rating && !(body.liked + body.annoyed + body.quote).trim()) {
+    $('fb-status').textContent = T('fbEmpty'); return;
+  }
+  try {
+    const r = await fetch('/api/feedback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    $('feedback').classList.remove('on');
+    ['fb-liked', 'fb-annoyed', 'fb-quote'].forEach(id => { $(id).value = ''; });
+    fbRating = 0;
+    log('me', T('fbSaved'));
+    if (j.mailto) { log('me', T('fbMail')); window.location.href = j.mailto; }
+    else if (j.url) window.open(j.url, '_blank', 'noopener');
+    else showPrompt(T('fbCopyTitle'), j.text);
+  } catch (e) { $('fb-status').textContent = T('noAnswer'); }
+});
+
+/* ------------------------------------------------ speech in */
+function initMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { $('mic').disabled = true; $('mic').textContent = T('micNone'); return; }
+  recog = new SR();
+  recog.lang = (LANGS.find(l => l.code === LANG) || {}).recognition || 'en-US';
+  recog.interimResults = true;
+  recog.continuous = false;
+  recog.maxAlternatives = 1;
+
+  let last = '';
+  recog.onresult = (e) => {
+    last = Array.from(e.results).map(r => r[0].transcript).join('');
+    $('mic').textContent = '🎙 ' + last.slice(-26);
+  };
+  recog.onerror = (e) => log('err', 'Microphone: ' + e.error);
+  recog.onend = () => {
+    listening = false;
+    $('mic').classList.remove('live');
+    $('mic').textContent = T('mic');
+    if (last.trim()) { command(last.trim()); last = ''; }
+  };
+}
+
+function toggleMic() {
+  if (!recog) return;
+  if (listening) { recog.stop(); return; }
+  $('player').pause();
+  listening = true;
+  $('mic').classList.add('live');
+  $('mic').textContent = T('micLive');
+  try { recog.start(); } catch (e) { listening = false; $('mic').classList.remove('live'); }
+}
+
+async function command(text) {
+  log('you', text);
+  let j;
+  try {
+    const r = await fetch('/api/command', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, lang: LANG })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    j = await r.json();
+  } catch (e) {
+    log('err', T('noAnswer'));
+    setOffline(true);
+    return;
+  }
+  if (j.action === 'stop') { stopSpeech(); log('me', T('stopped')); return; }
+  if (j.say) { log('me', j.say); say(j.say, { btn: $('report'), key: 'reply' }); }
+  else if (j.intent === 'unknown') log('me', T('unknownCmd'));
+  if (j.question_id) watchAnswer(j.question_id, text, Date.now());
+  if (j.refresh || j.focus) await load(j.focus);
+}
+
+/* ------------------------------------------------ wire up */
+$('mic').addEventListener('click', toggleMic);
+$('refresh').addEventListener('click', () => { load(); requestSync({ force: true }); });
+$('lang').addEventListener('click', () => {
+  const i = LANGS.findIndex(l => l.code === LANG);
+  setLang(LANGS[(i + 1) % LANGS.length].code);
+});
+/* The dashboard has no Brightspace session of its own — only Chrome does — so it cannot
+   look for new announcements itself. It queues the check, the watcher wakes Claude, and
+   the answer comes back here. A report built on stale data says so out loud and starts
+   this at the same time. */
+async function requestSync(opts) {
+  const { force = false, onStart = false, speakChanges = false } = opts || {};
+  const q = `/api/sync?lang=${LANG}`
+    + (force ? '&force=true' : '') + (onStart ? '&on_start=true' : '');
+  try {
+    const r = await fetch(q, { method: 'POST' });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.autosync && !j.queued) { if (force) log('me', T('syncFresh')); return; }
+    if (j.autosync) { log('me', T('syncing')); followAutosync(speakChanges); }
+    if (!j.queued) return;
+    // A queued request is not a running one. If no Claude session is holding
+    // `tools/ask.py wait`, it sits there forever looking busy — so say so instead of
+    // showing a spinner that will never finish. It counts as live if something is
+    // blocking on the queue now, or if a watcher already handed it over and exited.
+    const listening = j.picked_up || !j.freshness || j.freshness.watcher;
+    if (!listening && !j.autosync) log('me', T('syncNoWatcher'));
+    watchAnswer(j.queued, T('syncing'), Date.now());
+  } catch (e) { /* offline banner covers it */ }
+}
+
+/* A date the voice can read. The ISO stamp is fine on screen and terrible out loud, and
+   the hour convention differs per language: English says "at 2 PM", Bulgarian "в 14 часа". */
+function spokenDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const bg = LANG === 'bg';
+  const day = d.toLocaleDateString(T('locale'), { day: 'numeric', month: 'long' });
+  const hasTime = /T\d\d:\d\d/.test(iso);
+  if (!hasTime) return day;
+  const time = bg
+    ? `${d.getHours()} часа` + (d.getMinutes() ? ` и ${d.getMinutes()}` : '')
+    : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: d.getMinutes() ? '2-digit' : undefined, hour12: true });
+  return bg ? `${day}, ${time}` : `${day}, ${time}`;
+}
+
+/* say() keeps one flight at a time and aborts the previous one, so announcing the check
+   while the brief is still playing would cut the brief off mid-sentence. Wait it out. */
+async function speakWhenQuiet(text, key) {
+  const end = Date.now() + 5 * 60 * 1000;
+  while (speech.key && Date.now() < end) await new Promise(r => setTimeout(r, 400));
+  if (Date.now() >= end) { log('me', text); return; }   // gave up waiting — at least show it
+  say(text, { btn: $('report'), key: key || 'syncdelta' });
+}
+
+/* The unattended check runs in a thread on the server, so the page follows it here
+   rather than holding the POST open for half a minute. */
+async function followAutosync(speakChanges) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    let s;
+    try { s = await (await fetch('/api/autosync')).json(); }
+    catch (e) { return; }
+    if (s.state === 'running') continue;
+    const res = s.result || {};
+    if (!res.ok) {
+      if (res.reason === 'login') {
+        logAction('err', T('syncLogin'), T('loginBtn'));
+      } else if (res.reason === 'setup') {
+        log('err', T('syncSetup'));
+      } else {
+        log('err', T('syncFailed')(res.message || res.reason || '?'));
+      }
+      // Report was pressed to get current numbers. Staying silent about a failed check
+      // would leave the spoken brief sounding authoritative when it is not.
+      if (speakChanges) speakWhenQuiet(T('syncFailedSpoken'), 'syncfail');
+      return;
+    }
+    const bits = [];
+    const spoken = [];
+    (res.moved || []).forEach(m => {
+      bits.push(T('syncMoved')(m.title, m.to));
+      spoken.push(T('spokenMoved')(m.title, spokenDate(m.to)));
+    });
+    (res.new_folders || []).forEach(f => {
+      bits.push(T('syncNewFolder')(f.title, f.due));
+      spoken.push(T('spokenNewFolder')(f.title, spokenDate(f.due)));
+    });
+    (res.news || []).forEach(n => {
+      bits.push(T('syncNews')(n.title));
+      spoken.push(T('spokenNews')(n.title));
+    });
+    if (!bits.length) log('me', T('syncNothingNew'));
+    else bits.forEach(b => log('me', b));
+    // Only interrupt with speech when there is something worth hearing. "Nothing new"
+    // after every single Report press would be noise.
+    if (speakChanges && spoken.length) {
+      speakWhenQuiet(T('spokenIntro') + ' ' + spoken.join(' '), 'syncdelta');
+    }
+    await load();                       // the ring and the counts move with it
+    return;
+  }
+}
+
+$('report').addEventListener('click', async () => {
+  if (speech.key === 'report') { stopSpeech(); return; }
+  try {
+    const r = await fetch('/api/brief?lang=' + LANG);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    log('me', j.text.split('\n\n')[0]);
+    say(j.text, { btn: $('report'), key: 'report' });
+    // Report always re-checks Brightspace, fresh data or not: pressing it is the moment
+    // the numbers get trusted and repeated out loud. The brief is spoken straight away
+    // from what we have, so there is no silence, and whatever the check turns up is
+    // spoken after it finishes rather than cutting it off.
+    requestSync({ force: true, speakChanges: true });
+  } catch (e) {
+    log('err', T('noAnswer'));
+    setOffline(true);
+  }
+});
+
+// the very first touch anywhere is what buys us permission to play sound later
+['pointerdown', 'keydown'].forEach(evt =>
+  document.addEventListener(evt, unlockAudio, { once: true, capture: true }));
+
+$('tap').addEventListener('click', async () => {
+  showTap(false);
+  audioUnlocked = true;
+  try { await $('player').play(); markBtn(speech.btn, 'playing'); }
+  catch (e) { log('err', T('voiceFail') + e.message); }
+});
+
+$('tab-active').addEventListener('click', () => setView('active'));
+$('tab-done').addEventListener('click', () => setView('done'));
+$('tab-news').addEventListener('click', () => setView('news'));
+$('tab-sched').addEventListener('click', () => setView('sched'));
+$('ask-status').addEventListener('click', showPending);
+$('modal-cancel').addEventListener('click', cancelOldest);
+$('modal-send').addEventListener('click', () => { if (modalSend) modalSend($('modal-text').value); });
+$('ask-send').addEventListener('click', () => {
+  askQuestion($('ask-input').value);
+  $('ask-input').value = '';
+});
+$('ask-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('ask-send').click(); }
+});
+
+$('modal-copy').addEventListener('click', async () => {
+  const ta = $('modal-text');
+  ta.select();
+  try { await navigator.clipboard.writeText(ta.value); } catch (e) { document.execCommand('copy'); }
+  $('modal-copy').textContent = '✓';
+  setTimeout(() => { $('modal-copy').textContent = T('copy'); }, 1200);
+});
+$('modal-close').addEventListener('click', () => $('modal').classList.remove('on'));
+$('modal').addEventListener('click', e => { if (e.target.id === 'modal') $('modal').classList.remove('on'); });
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Escape') {
+    for (const id of ['modal', 'feedback', 'setup']) {
+      if ($(id).classList.contains('on')) { $(id).classList.remove('on'); return; }
+    }
+    stopSpeech();
+    return;
+  }
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.code === 'KeyM') { e.preventDefault(); toggleMic(); }
+  if (e.code === 'KeyL') { e.preventDefault(); $('lang').click(); }
+});
+
+(async function boot() {
+  try {
+    const j = await (await fetch('/api/languages')).json();
+    if (j.available && j.available.length) LANGS = j.available;
+    if (!LANGS.some(l => l.code === LANG)) LANG = j.active || LANGS[0].code;
+  } catch (e) { /* keep the built-in defaults */ }
+  initMic();
+  applyStatic();
+  await load();
+  if (STATE && (STATE.features || {}).ai) {
+    await loadHistory();      // the conversation so far, read back from disk
+    await resumePending();    // questions asked before a reload are still owed an answer
+  }
+  // Opening the dashboard is the moment its numbers start being trusted, so this is
+  // where Brightspace gets checked for new announcements and assignments. The server
+  // decides whether it is worth it (report.sync_on_start_after_minutes); restarting
+  // twice in a row does not queue two checks.
+  if (STATE && (STATE.assistant || {}).onboarded) {
+    requestSync({ onStart: true });
+    if ((STATE.features || {}).teams) fetch('/api/teams/sync', { method: 'POST' })
+      .then(() => setTimeout(load, 8000)).catch(() => {});
+  }
+  checkUpdate();
+  setTimeout(checkUpdate, 45000);          // the download finishes after the page is up
+  setInterval(checkUpdate, 30 * 60000);
+  tick();
+  setInterval(tick, 1000);
+  setInterval(() => load(), 120000);
+})();
+</script>
+</body>
+</html>

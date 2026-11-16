@@ -1,0 +1,57 @@
+{
+  "_note": "Starting point for a handed-out copy. Copied to the user's own folder on first run; the setup screen fills in the rest.",
+  "assistant": {
+    "name": "JARVIS",
+    "onboarded": false
+  },
+  "features": {
+    "ai": false
+  },
+  "brightspace": {
+    "base_url": "https://brightspace.avans.nl"
+  },
+  "course": {
+    "api_version": "1.87"
+  },
+  "courses": [],
+  "report": {
+    "language": "en",
+    "rate": "+8%",
+    "max_spoken_tasks": 6,
+    "stale_after_hours": 6,
+    "sync_on_start_after_minutes": 30
+  },
+  "languages": {
+    "en": {
+      "label": "English",
+      "voice": "en-US-AndrewMultilingualNeural",
+      "recognition": "en-US",
+      "address": ""
+    },
+    "bg": {
+      "label": "Български",
+      "voice": "bg-BG-BorislavNeural",
+      "recognition": "bg-BG",
+      "address": ""
+    }
+  },
+  "priority_rules": {
+    "overdue_boost": 3,
+    "due_within_days": 7,
+    "graded_boost": 2
+  },
+  "sync": {
+    "autosync": true,
+    "cdp_port": 9333
+  },
+  "feedback": {
+    "email": "",
+    "url": ""
+  },
+  "mobile": {
+    "enabled": false
+  },
+  "teams": {
+    "enabled": false
+  }
+}

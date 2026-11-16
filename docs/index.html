@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get your study assistant</title>
+<meta name="description" content="A dashboard that tracks your Brightspace deadlines and reads them out loud. Install from one link.">
+<style>
+  :root{
+    --bg:#04070d; --panel:rgba(10,20,34,.72); --line:rgba(79,216,232,.22);
+    --cyan:#4fd8e8; --cyan-dim:rgba(79,216,232,.55); --amber:#ffb347;
+    --text:#cfe6ef; --muted:#6b8798;
+    --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--mono);
+       font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:radial-gradient(900px 600px at 22% 20%,rgba(79,216,232,.10),transparent 62%),
+               radial-gradient(700px 500px at 82% 85%,rgba(79,216,232,.06),transparent 60%)}
+  .wrap{position:relative;z-index:1;max-width:760px;margin:0 auto;padding:40px 20px 80px}
+  header{text-align:center;margin-bottom:40px}
+  .brand{font-size:16px;letter-spacing:.34em;color:var(--cyan);text-shadow:0 0 18px rgba(79,216,232,.5)}
+  h1{font-size:clamp(26px,6vw,40px);line-height:1.2;margin:18px 0 10px;font-weight:400}
+  h1 b{color:var(--cyan);font-weight:400}
+  .sub{color:var(--muted);max-width:520px;margin:0 auto}
+  .panel{background:var(--panel);border:1px solid var(--line);padding:22px;margin:18px 0;
+         position:relative;backdrop-filter:blur(2px)}
+  .panel::before,.panel::after{content:"";position:absolute;width:12px;height:12px;
+    border:1px solid var(--cyan);opacity:.7}
+  .panel::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+  .panel::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+  h2{font-size:12px;letter-spacing:.2em;color:var(--cyan);text-transform:uppercase;
+     font-weight:400;margin:0 0 14px}
+  .dl{display:flex;gap:14px;flex-wrap:wrap}
+  .btn{flex:1 1 240px;display:block;text-decoration:none;color:var(--cyan);
+       border:1px solid var(--cyan-dim);background:transparent;padding:16px 18px;
+       transition:.18s;text-align:left}
+  .btn:hover{background:rgba(79,216,232,.10)}
+  .btn b{display:block;font-size:16px;letter-spacing:.04em}
+  .btn span{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+  ol{margin:0;padding-left:22px}
+  ol li{margin-bottom:10px}
+  .note{border-left:2px solid rgba(255,179,71,.5);background:rgba(255,179,71,.06);
+        padding:10px 14px;margin:14px 0 0;font-size:13px;color:var(--text)}
+  .priv li{margin-bottom:7px;color:var(--muted);font-size:13px}
+  .priv b{color:var(--text)}
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:40px}
+  a{color:var(--cyan)}
+  @media(max-width:520px){.wrap{padding:28px 16px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">STUDY ASSISTANT</div>
+    <h1>Your deadlines, <b>read out loud</b>.</h1>
+    <p class="sub">A dashboard that follows your Brightspace courses and Teams timetable,
+    tells you what is due, and speaks it. Everything runs on your own computer —
+    nothing is uploaded anywhere.</p>
+  </header>
+
+  <section class="panel">
+    <h2>1 · Download</h2>
+    <div class="dl">
+      <a class="btn" id="dl-win" href="https://github.com/lachossavov-cpu/study-assistant/releases/latest/download/Assistant-windows.zip" download>
+        <b>⊞ Windows</b>
+        <span>Unzip, double-click Assistant.exe. Nothing to install.</span>
+      </a>
+      <a class="btn" id="dl-mac" href="https://github.com/lachossavov-cpu/study-assistant/releases/latest/download/Assistant-mac.zip" download>
+        <b> Mac</b>
+        <span>Unzip, double-click Start.command. Needs Python 3.10+.</span>
+      </a>
+    </div>
+    <div class="note" id="win-warn">
+      Windows may say <b>"Windows protected your PC"</b> — the app is not signed yet.
+      Click <b>More info → Run anyway</b>.
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>2 · First run</h2>
+    <ol>
+      <li>Give your assistant a <b>name</b>.</li>
+      <li>Press <b>Open sign-in window</b> and log in to Brightspace with your school
+          account. Your password goes to your school's own page — the app never sees it.</li>
+      <li>Press <b>Find my courses</b> and tick the ones to follow.</li>
+      <li>Optional: switch on <b>Teams</b> to see your class timetable, and
+          <b>phone access</b> to open the same dashboard on your phone.</li>
+    </ol>
+  </section>
+
+  <section class="panel">
+    <h2>3 · Add it to your phone</h2>
+    <ol>
+      <li>In Settings (⚙) on the computer, turn on <b>Phone access</b> and restart the app.</li>
+      <li>On your phone, on the <b>same Wi-Fi</b>, open the address the app shows and enter
+          the six-digit code.</li>
+      <li>Add it to your home screen: iPhone — Share → Add to Home Screen; Android —
+          ⋮ → Add to Home screen.</li>
+    </ol>
+    <div class="note">The computer has to be on and running the app. School Wi-Fi such as
+      eduroam usually blocks this; home Wi-Fi works.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Updates</h2>
+    <p style="margin:0;color:var(--muted);font-size:13px">You download it once. When the app
+    starts it checks this project for a newer version, fetches it, and uses it the next time
+    you open the app — and tells you what changed. If an update ever fails to start, the app
+    goes back to the version before it by itself.</p>
+  </section>
+
+  <section class="panel">
+    <h2>What stays private</h2>
+    <ul class="priv">
+      <li><b>Everything stays on your computer.</b> Your tasks, your course list, your
+          timetable — none of it is uploaded.</li>
+      <li><b>You sign in yourself</b>, on Brightspace's and Microsoft's own pages. The app
+          never stores a password.</li>
+      <li><b>Teams is read-only.</b> It reads your timetable; it never sends messages,
+          mail or changes anything.</li>
+      <li>The only thing that leaves your computer is the text being read aloud, which
+          goes to Microsoft's voice service to be turned into speech.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Early access · built by a student, for classmates · tell me what breaks
+  </footer>
+</div>
+<script>
+  // Hide the download button that does not match the visitor's computer, and the
+  // Windows-only warning on a Mac. Both links stay reachable; this is only tidying.
+  var mac = /Mac/.test(navigator.platform) || /Mac/.test(navigator.userAgent);
+  if (mac) { document.getElementById('win-warn').style.display = 'none'; }
+</script>
+</body>
+</html>
