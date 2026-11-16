@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -85,8 +86,12 @@ def main():
     repo = repo_slug() or rel.get("repo", "")
     if not repo and not a.dry_run:
         sys.exit("No GitHub remote yet. Create the repository and `git remote add origin` first.")
-    published = sh(["git", "tag", "--list", f"v{a.version}"], check=False, capture=True).stdout.strip()
-    if published:
+    # "Released" means the GitHub release exists — not that a local tag does. The first
+    # release died between the tag and the upload on a dropped connection; judging by the
+    # tag would have refused to finish it.
+    gh = gh_exe()
+    if gh and repo and sh([gh, "release", "view", f"v{a.version}", "--repo", repo],
+                          check=False, capture=True).returncode == 0:
         sys.exit(f"v{a.version} is already released. Testers only pick up a HIGHER number.")
     if vtuple(a.version) < vtuple(rel["version"]):
         sys.exit(f"{a.version} is lower than the current {rel['version']} — nobody would update.")
@@ -117,14 +122,18 @@ def main():
         print(f"\nDry run: v{a.version} is built in dist/ and NOT published.")
         return
 
-    gh = gh_exe()
     if not gh:
         sys.exit("GitHub CLI not found. Install it, run `gh auth login`, then release again.")
     print("== publish")
     sh(["git", "add", "-A"])
     sh(["git", "commit", "-m", f"Release v{a.version}\n\n{a.notes}"], check=False)
-    sh(["git", "tag", f"v{a.version}"])
-    sh(["git", "push", "origin", "HEAD", "--tags"])
+    sh(["git", "tag", "-f", f"v{a.version}"])
+    for attempt in range(3):             # the connection to github.com drops now and then
+        if sh(["git", "push", "origin", "HEAD", "--tags"], check=False).returncode == 0:
+            break
+        time.sleep(5 * (attempt + 1))
+    else:
+        sys.exit("Could not push. Nothing was published — run the same command again.")
     sh([gh, "release", "create", f"v{a.version}", *[str(DIST / f) for f in ASSETS],
         "--title", f"v{a.version}", "--notes", a.notes, "--latest"])
     print(f"\nReleased v{a.version}. Every running copy picks it up the next time it starts.")
