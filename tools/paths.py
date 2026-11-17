@@ -48,11 +48,42 @@ def ensure_home():
         shutil.copyfile(DEFAULT_CONFIG, CONFIG)
 
 
-def read_config() -> dict:
+def read_user_config() -> dict:
+    """Exactly what is in this person's config.json. Use this when WRITING it back."""
     try:
         return json.loads(CONFIG.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _merge(base: dict, mine: dict) -> dict:
+    """Defaults underneath, the person's own values on top. Lists are taken whole."""
+    out = dict(base)
+    for k, v in mine.items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def read_config() -> dict:
+    """The config to act on.
+
+    A handed-out copy seeds config.json from the defaults ONCE, on first run. Anything
+    added to the defaults later — a new switch shipped in an update — would never reach
+    the people who already have the app. So for those copies the current defaults are
+    merged underneath on every read. Their own choices still win.
+
+    Writers must use read_user_config(): writing the merged dict back would freeze
+    today's defaults into the file and stop the next update from changing them.
+    """
+    mine = read_user_config()
+    if not SHARED:
+        return mine
+    try:
+        defaults = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return mine
+    defaults.pop("_note", None)
+    return _merge(defaults, mine)
 
 
 def write_config(cfg: dict):

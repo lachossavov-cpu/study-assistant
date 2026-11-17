@@ -126,6 +126,36 @@ COURSES_JS = r"""
 """
 
 
+NEW_FOLDER_DESC = "New submission folder in Brightspace. The details have not been read yet."
+NEW_FOLDER_REQ = "Detected automatically — the description has not been reviewed."
+# what 0.1.0 wrote instead, still sitting in testers' task lists
+_OLD_TEXT = {
+    "Нова папка за предаване в Brightspace. Подробностите не са прочетени.": NEW_FOLDER_DESC,
+    "Автоматично засечена папка — описанието не е минало през преценка": NEW_FOLDER_REQ,
+}
+_OLD_DELIVERABLE = re.compile(r"^Предава се в Brightspace dropbox #(\d+) '(.*)'$", re.S)
+
+
+def english_placeholders(db) -> int:
+    """Rewrite the Bulgarian placeholder text earlier versions stored. Returns how many
+    tasks changed. Only exact known strings are touched — never anything a person wrote."""
+    changed = 0
+    for t in db.get("tasks", []):
+        before = json.dumps([t.get("description"), t.get("deliverables"), t.get("requirements")],
+                            ensure_ascii=False)
+        if t.get("description") in _OLD_TEXT:
+            t["description"] = _OLD_TEXT[t["description"]]
+        if isinstance(t.get("requirements"), list):
+            t["requirements"] = [_OLD_TEXT.get(r, r) for r in t["requirements"]]
+        if isinstance(t.get("deliverables"), list):
+            t["deliverables"] = [_OLD_DELIVERABLE.sub(r"Hand in through Brightspace dropbox #\1 '\2'", d)
+                                 if isinstance(d, str) else d for d in t["deliverables"]]
+        after = json.dumps([t.get("description"), t.get("deliverables"), t.get("requirements")],
+                           ensure_ascii=False)
+        changed += before != after
+    return changed
+
+
 def iso_local(dt_utc: str):
     """D2L hands out UTC with a Z. Store local wall-clock, which is what tasks.py sorts."""
     if not dt_utc:
@@ -280,12 +310,12 @@ def diff(data, db):
                 "weight": (f"{g['weight']}% of the grade, {g['max']} points"
                            if g and g.get("weight") else
                            (f"{f['pts']} points" if f.get("pts") else None)),
-                "description": (f.get("instructions") or "")[:400] or
-                               "Нова папка за предаване в Brightspace. Подробностите не са прочетени.",
-                "deliverables": [f"Предава се в Brightspace dropbox #{f['id']} '{f['name']}'"],
-                "requirements": [
-                    "Автоматично засечена папка — описанието не е минало през преценка",
-                ],
+                # English: this is the ORIGINAL field. Translations live in i18n, and
+                # these used to be written in Bulgarian straight into the original —
+                # which put Bulgarian in front of every beta tester.
+                "description": (f.get("instructions") or "")[:400] or NEW_FOLDER_DESC,
+                "deliverables": [f"Hand in through Brightspace dropbox #{f['id']} '{f['name']}'"],
+                "requirements": [NEW_FOLDER_REQ],
                 "resources": [],
                 "source_url": cdp.cfg("course", "lessons_url", default="") or cdp.home_url(),
                 "source_unit": str(f.get("ou") or fallback_ou),
@@ -391,6 +421,7 @@ def run(dry_run=False, lang="en"):
     if dry_run:
         return result
 
+    english_placeholders(db)
     by_id = {t["id"]: t for t in db["tasks"]}
     for m in moved:
         by_id[m["id"]]["due"] = m["to"]

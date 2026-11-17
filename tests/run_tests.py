@@ -55,6 +55,7 @@ def free_port():
 
 PORT = free_port()
 BASE = f"http://127.0.0.1:{PORT}"
+SERVER_LOG = TMP / "server-output.log"
 
 PASSED, FAILED, SKIPPED = [], [], []
 _section = ""
@@ -591,15 +592,19 @@ def start_server():
     env = {**os.environ, "AVANS_DB": str(TMP / "tasks.json"), "AVANS_ASK": str(TMP / "ask"),
            "AVANS_NO_AUTOSYNC": "1",
            "AVANS_WORK": str(TMP / "work")}
+    # Into a FILE, not subprocess.PIPE. Nobody read the pipe, and on Windows it holds a
+    # few KB: once the server had printed a couple of tracebacks (edge-tts failing, say)
+    # its next print blocked for ever, and every later test timed out on a server that
+    # was simply stuck writing. That looked exactly like a broken voice.
+    log = open(SERVER_LOG, "w", encoding="utf-8", errors="replace")
     proc = subprocess.Popen(
         [sys.executable, "-c",
          f"import uvicorn,sys; sys.path.insert(0,r'{ROOT}');"
          f"from server.app import app; uvicorn.run(app,host='127.0.0.1',port={PORT},log_level='error')"],
-        cwd=str(ROOT), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        cwd=str(ROOT), env=env, stdout=log, stderr=subprocess.STDOUT)
     for _ in range(80):
         if proc.poll() is not None:
-            raise RuntimeError("сървърът умря:\n" + proc.stdout.read().decode("utf-8", "replace"))
+            raise RuntimeError("сървърът умря:\n" + SERVER_LOG.read_text(encoding="utf-8", errors="replace"))
         try:
             urllib.request.urlopen(BASE + "/api/state", timeout=1)
             return proc
@@ -627,7 +632,8 @@ def test_shared_copy():
         [sys.executable, "-c",
          f"import uvicorn,sys; sys.path.insert(0,r'{ROOT}');"
          f"from server.app import app; uvicorn.run(app,host='127.0.0.1',port={port},log_level='error')"],
-        cwd=str(ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        cwd=str(ROOT), env=env, stdout=open(TMP / "shared-server.log", "w"),
+        stderr=subprocess.STDOUT)       # a file, not an undrained pipe — see start_server()
 
     def call(path, method="GET", body=None):
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -643,7 +649,7 @@ def test_shared_copy():
     try:
         for _ in range(80):
             if proc.poll() is not None:
-                raise RuntimeError(proc.stdout.read().decode("utf-8", "replace"))
+                raise RuntimeError((TMP / "shared-server.log").read_text(errors="replace"))
             try:
                 urllib.request.urlopen(base + "/api/setup", timeout=1)
                 break
@@ -717,6 +723,83 @@ def test_shared_copy():
             call("/api/setup", "POST", {"teams": False})
             return "изключен по подразбиране, state носи schedule, настройката го превключва"
         check("Teams разписанието е изключено по подразбиране и се превключва", teams_flag)
+
+        CYR = re.compile(r"[Ѐ-ӿ]")
+
+        def beta_layout():
+            _, st = call("/api/state")
+            eq(st["ui"], {"english_only": True, "overdue_tab": True, "split_sources": True},
+               "ui в бетата: ")
+            _, st = call("/api/state?lang=bg")
+            eq(st["lang"], "en", "бетата прие ?lang=bg: ")
+            _, langs = call("/api/languages")
+            eq([l["code"] for l in langs["available"]], ["en"], "езици: ")
+            # личното табло (основният тестов сървър чете config.json на собственика)
+            _, mine, _ = req("/api/state")
+            assert not any(mine["ui"].values()), f"личното табло получи бета изгледа: {mine['ui']}"
+            return "само английски, Overdue и разделени източници; личното табло е както беше"
+        check("бетата е на английски, с Overdue и разделени източници — личното не", beta_layout)
+
+        def defaults_reach_old_installs():
+            """Копие, инсталирано с 0.1.0, има config.json без `ui`. Новият превключвател
+            трябва да стигне до него с обновлението, без човекът да прави нищо."""
+            cf = home / "config.json"
+            c = json.loads(cf.read_text(encoding="utf-8"))
+            c.pop("ui", None)
+            c.setdefault("assistant", {})["name"] = "Kept"
+            cf.write_text(json.dumps(c, ensure_ascii=False), encoding="utf-8")
+            _, st = call("/api/state")
+            eq(st["ui"]["overdue_tab"], True, "стар config не получи новия превключвател: ")
+            eq(st["assistant"]["name"], "Kept", "собственият избор на човека: ")
+            call("/api/setup", "POST", {"name": "Friday"})
+            after = json.loads(cf.read_text(encoding="utf-8"))
+            assert "ui" not in after, "запис на настройката замрази подразбиращите се в config.json"
+            return "подразбиращите се отдолу, изборът на човека отгоре, нищо не се замразява"
+        check("нови подразбиращи се стигат до вече инсталирани копия", defaults_reach_old_installs)
+
+        def no_bulgarian_in_beta():
+            """Всичко, което бетата показва или изговаря, е на английски — включително
+            задачите, които autosync сам създава, и тези, записани на български от 0.1.0."""
+            import autosync
+            keep = autosync.cdp.courses
+            autosync.cdp.courses = lambda: [{"org_unit_id": "11", "name": "Course A"},
+                                            {"org_unit_id": "22", "name": "Course B"}]
+            try:
+                fresh, _ = autosync.diff({"folders": [
+                    {"ou": "11", "id": 701, "name": "Essay", "due": "2030-01-10T22:59:00.000Z"},
+                    {"ou": "22", "id": 702, "name": "Pitch", "due": "2020-01-10T22:59:00.000Z"}],
+                    "grades": [], "news": []}, {"tasks": []})
+            finally:
+                autosync.cdp.courses = keep
+            legacy = dict(fresh[1], id="legacy",
+                          description="Нова папка за предаване в Brightspace. Подробностите не са прочетени.",
+                          deliverables=["Предава се в Brightspace dropbox #9 'Old'"],
+                          requirements=["Автоматично засечена папка — описанието не е минало през преценка"])
+            db = {"tasks": [dict(t, status="todo") for t in fresh] + [dict(legacy, status="todo")]}
+            eq(autosync.english_placeholders(db), 1, "мигрирани задачи: ")
+            (home / "data").mkdir(parents=True, exist_ok=True)
+            (home / "data" / "tasks.json").write_text(json.dumps(db, ensure_ascii=False), encoding="utf-8")
+            seen = []
+            for path in ("/api/state", "/api/brief", "/api/setup", "/api/languages"):
+                _, body = call(path)
+                seen.append(json.dumps(body, ensure_ascii=False))
+            for text in ("report", "what is most urgent", "when is essay due", "blah blah"):
+                _, body = call("/api/command", "POST", {"text": text})
+                seen.append(json.dumps(body, ensure_ascii=False))
+            hits = [m.group(0) for s_ in seen for m in [CYR.search(s_)] if m]
+            assert not hits, f"кирилица в бетата: {hits[:3]}"
+            _, st = call("/api/state")
+            eq({t["course"] for t in st["tasks"]}, {"Course A", "Course B"}, "курс на картата: ")
+            eq(st["courses_count"], len(json.loads((home / "config.json").read_text(
+                encoding="utf-8")).get("courses", [])), "броят курсове идва от config: ")
+            return f"{len(seen)} отговора без нито една кирилска буква"
+        check("бетата не показва и не изговаря нищо на български", no_bulgarian_in_beta)
+
+        def sync_reports_teams():
+            _, j = call("/api/sync?force=true", "POST")
+            assert "teams" in j, f"/api/sync не казва нищо за Teams: {j}"
+            return True
+        check("↻ отговаря и за Teams", sync_reports_teams)
 
         def feedback_local():
             eq(call("/api/feedback", "POST", {})[0], 400, "празен отзив: ")
@@ -831,6 +914,35 @@ def test_multi_course():
         assert isinstance(cdp.CHROME_CANDIDATES, list) and cdp.CHROME_CANDIDATES
         return f"{len(cdp.CHROME_CANDIDATES)} места, където се търси браузър (Chrome, после Edge)"
     check("профилът на браузъра не зависи от LOCALAPPDATA и познава Edge", cross_platform)
+
+    def english_dashboard_strings():
+        page = (ROOT / "server" / "static" / "index.html").read_text(encoding="utf-8")
+        en = page[page.index("\n  en: {"):page.index("\n  bg: {")]
+        hit = re.search(r"[Ѐ-ӿ].{0,30}", en)
+        assert not hit, f"кирилица в английските надписи: {hit.group(0)}"
+        for key in ("tabOverdue", "srcBrightspace", "srcTeams", "teamsChecking", "teamsDone"):
+            assert key + ":" in en, f"липсва {key}"
+        return "английският блок е изцяло на английски"
+    check("английските надписи на таблото нямат кирилица", english_dashboard_strings)
+
+    def browser_takes_turns():
+        """↻ пуска Brightspace и Teams заедно; двете карат един профил на браузъра.
+        Teams трябва да чака, докато Brightspace държи браузъра."""
+        code = (
+            "import sys,time,json;"
+            f"sys.path.insert(0,r'{ROOT / 'server'}');import app as A;import teams as T;"
+            "ran=[];T.run=lambda **k: ran.append(1) or {'ok':True,'events':[]};"
+            "A.BROWSER_LOCK.acquire();A.start_teams();time.sleep(0.8);before=len(ran);"
+            "A.BROWSER_LOCK.release();time.sleep(0.8);"
+            "print(json.dumps([before,len(ran),A.TEAMS['state']]))"
+        )
+        env = {**os.environ, "AVANS_NO_AUTOSYNC": "1"}
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                             timeout=60, env=env, cwd=str(ROOT))
+        got = json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else out.stderr[-300:]
+        eq(got, [0, 1, "done"], "преди / след освобождаване / състояние: ")
+        return "Teams изчаква браузъра, после минава"
+    check("Brightspace и Teams не карат браузъра едновременно", browser_takes_turns)
 
 
 def test_server(proc, network):
@@ -2062,6 +2174,8 @@ def main():
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        if os.environ.get("KEEP_SERVER_LOG") and SERVER_LOG.exists():
+            shutil.copy(SERVER_LOG, os.environ["KEEP_SERVER_LOG"])
         shutil.rmtree(TMP, ignore_errors=True)
 
     total = len(PASSED) + len(FAILED)

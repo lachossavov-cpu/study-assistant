@@ -68,9 +68,8 @@ LAUNCHED: dict = {"pid": None}
 
 
 def cfg(*path, default=None):
-    try:
-        d = json.loads(CONFIG.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    d = paths.read_config()
+    if not d:
         return default
     for k in path:
         if not isinstance(d, dict) or k not in d:

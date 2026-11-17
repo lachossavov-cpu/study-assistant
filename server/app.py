@@ -111,8 +111,17 @@ def is_local(request: Request) -> bool:
     return bool(request.client) and request.client.host in ("127.0.0.1", "::1")
 
 
+def ui_flags() -> dict:
+    """Layout switches for the beta (config `ui`). The owner's config has none, so the
+    personal dashboard keeps its own layout."""
+    u = cfg().get("ui") or {}
+    return {k: bool(u.get(k)) for k in ("english_only", "overdue_tab", "split_sources")}
+
+
 def resolve_lang(lang=None):
     c = cfg()
+    if ui_flags()["english_only"]:
+        return "en"
     known = c.get("languages", {})
     if lang in known:
         return lang
@@ -179,11 +188,13 @@ INTENTS = {
 
 # ---------------------------------------------------------------- state
 
-def task_view(t, lang):
+def task_view(t, lang, course_names=None):
     loc = tasks_mod.localize(t, lang)
     return {
         "id": t["id"],
         "title": t.get("title", ""),          # never translated — must match Brightspace
+        # which course it came from, so several courses do not blur into one list
+        "course": t.get("course") or (course_names or {}).get(str(t.get("source_unit", "")), ""),
         "type": t.get("type", ""),
         "status": t.get("status", "todo"),
         "priority": t.get("priority", 3),
@@ -216,6 +227,7 @@ def languages():
             {"code": k, "label": v.get("label", k), "voice": v.get("voice"),
              "recognition": v.get("recognition", k), "note": v.get("note", "")}
             for k, v in c.get("languages", {}).items()
+            if not ui_flags()["english_only"] or k == "en"
         ],
     }
 
@@ -232,10 +244,14 @@ def state(lang: str | None = Query(None)):
     # wins over a nearer future one; the front end renders it red as overdue.
     dated = [t for t in live if t.get("due") and tasks_mod.days_left(t) is not None]
     nxt = max(dated, key=tasks_mod.score) if dated else None
+    courses = followed_courses()
+    names = {str(c["org_unit_id"]): c.get("name", "") for c in courses}
     return {
         "now": datetime.now().isoformat(timespec="seconds"),
         "lang": lang,
-        "course": " · ".join(c["name"] for c in followed_courses() if c.get("name")),
+        "course": " · ".join(c["name"] for c in courses if c.get("name")),
+        "courses_count": len(courses),
+        "ui": ui_flags(),
         "assistant": {"name": assistant_name(), "onboarded": onboarded(),
                       "address": brief_mod.address(lang)},
         "features": {"ai": ai_on(), "teams": teams_on()},
@@ -251,8 +267,8 @@ def state(lang: str | None = Query(None)):
             "week": len(n["week"]), "undated": len(n["undated"]),
         },
         "next_deadline": {"id": nxt["id"], "title": nxt["title"], "due": nxt["due"]} if nxt else None,
-        "tasks": [task_view(t, lang) for t in live],
-        "done": [task_view(t, lang) for t in db["tasks"] if t.get("status") == "done"],
+        "tasks": [task_view(t, lang, names) for t in live],
+        "done": [task_view(t, lang, names) for t in db["tasks"] if t.get("status") == "done"],
     }
 
 
@@ -331,10 +347,17 @@ def autosync_enabled() -> bool:
         return True
 
 
+# Brightspace, Teams and bringing the window up all drive the same browser profile. Two
+# at once would each try to launch it, and the second launch fails on the profile lock —
+# so the ↻ button, which now starts both, makes them take turns.
+BROWSER_LOCK = threading.Lock()
+
+
 def _autosync_worker(lang: str):
     import autosync                                   # noqa: PLC0415 - worker-only
     try:
-        res = autosync.run(lang=lang)
+        with BROWSER_LOCK:
+            res = autosync.run(lang=lang)
     except Exception as e:                            # noqa: BLE001 - never kill the thread
         res = {"ok": False, "reason": "crash", "message": str(e)[:300]}
     # Brightspace unreachable from this profile? Then a Claude session driving the
@@ -357,7 +380,8 @@ TEAMS_LOCK = threading.Lock()
 def _teams_worker():
     import teams as teams_mod                           # noqa: PLC0415
     try:
-        res = teams_mod.run()
+        with BROWSER_LOCK:
+            res = teams_mod.run()
     except Exception as e:                               # noqa: BLE001
         res = {"ok": False, "reason": "crash", "message": str(e)[:300]}
     with TEAMS_LOCK:
@@ -394,6 +418,21 @@ def teams_sync():
     return {"started": start_teams()}
 
 
+def maybe_start_teams(force: bool, on_start: bool) -> str | None:
+    """Check Teams alongside Brightspace. None when Teams is off or was just checked."""
+    if not (teams_on() and autosync_enabled()):
+        return None
+    if on_start and not force:
+        last = tasks_mod.load().get("schedule_sync")
+        try:
+            age_min = (datetime.now() - datetime.fromisoformat(last)).total_seconds() / 60
+        except (TypeError, ValueError):
+            age_min = None
+        if age_min is not None and age_min < brief_mod.sync_on_start_after_minutes():
+            return None
+    return "started" if start_teams() else "running"
+
+
 BROWSER_READY = {"at": None, "result": None}
 
 
@@ -411,7 +450,8 @@ def ensure_browser_async():
     def worker():
         try:
             import cdp
-            res = cdp.ensure_session_tab()
+            with BROWSER_LOCK:
+                res = cdp.ensure_session_tab()
         except Exception as e:                        # noqa: BLE001
             res = {"error": str(e)[:200]}
         BROWSER_READY.update(at=datetime.now().isoformat(timespec="seconds"), result=res)
@@ -482,15 +522,18 @@ def request_sync(lang: str | None = Query(None), force: bool = Query(False),
     if on_start:
         # Before any throttling: opening the dashboard always brings the browser up.
         ensure_browser_async()
+    # Teams is checked by the same button. It waits its turn for the browser (see
+    # BROWSER_LOCK) and has its own "checked just now" clock.
+    teams = maybe_start_teams(force, on_start) if (force or on_start) else None
     if not force:
         age_h = fresh["age_hours"]
         if on_start:
             floor_h = brief_mod.sync_on_start_after_minutes() / 60.0
             if age_h is not None and age_h < floor_h:
-                return {"queued": None, "reason": "checked just now",
+                return {"teams": teams, "queued": None, "reason": "checked just now",
                         "browser": "opening", "freshness": fresh}
         elif not fresh["stale"]:
-            return {"queued": None, "reason": "already fresh", "freshness": fresh}
+            return {"teams": teams, "queued": None, "reason": "already fresh", "freshness": fresh}
     # Autosync runs FIRST, and runs even when a request is already queued for Claude.
     # Ordering these the other way round reproduced the bug this exists to kill: a
     # request nobody ever picked up sat in the queue for two weeks, and because one was
@@ -499,21 +542,21 @@ def request_sync(lang: str | None = Query(None), force: bool = Query(False),
                if on_start else "the ↻ button" if force else
                "a report built on stale data")
     if not autosync_enabled() and not ai_on():
-        return {"queued": None, "reason": "nothing can check: autosync is off and "
+        return {"teams": teams, "queued": None, "reason": "nothing can check: autosync is off and "
                 "this copy has no Claude session", "freshness": fresh}
     if not autosync_enabled():
         # No unattended path — a Claude session is the only way in, so ask for one now.
         waiting = pending_of_kind("sync")
         if waiting:
-            return {"queued": waiting["id"], "already": True,
+            return {"teams": teams, "queued": waiting["id"], "already": True,
                     "picked_up": bool(waiting.get("picked_up_at")),
                     "autosync": "off", "freshness": fresh}
-        return {"queued": queue_sync_for_claude(lang, why="disabled", trigger=trigger),
+        return {"teams": teams, "queued": queue_sync_for_claude(lang, why="disabled", trigger=trigger),
                 "already": False, "picked_up": False,
                 "autosync": "off", "freshness": fresh}
     started = start_autosync(lang)
     waiting = pending_of_kind("sync") if ai_on() else None
-    return {
+    return {"teams": teams, 
         "queued": waiting["id"] if waiting else None,
         "already": bool(waiting),
         # Picked up = a watcher handed it to Claude and exited, so the heartbeat is gone
@@ -1340,7 +1383,8 @@ def setup_courses():
         return {"ok": False, "reason": "disabled", "message": "autosync is off"}
     import autosync                                   # noqa: PLC0415
     try:
-        return autosync.my_courses()
+        with BROWSER_LOCK:
+            return autosync.my_courses()
     except Exception as e:                            # noqa: BLE001
         return {"ok": False, "reason": "crash", "message": str(e)[:300]}
 
@@ -1349,7 +1393,7 @@ def setup_courses():
 def setup_save(body: SetupIn, request: Request):
     if not is_local(request):
         raise HTTPException(403, "setup is done on the computer, not from the phone")
-    c = paths.read_config()
+    c = paths.read_user_config()
     a = c.setdefault("assistant", {})
     if body.name is not None:
         name = re.sub(r"[\x00-\x1f<>]", "", body.name).strip()[:24]
@@ -1543,7 +1587,7 @@ async def pair(request: Request):
     import urllib.parse                               # noqa: PLC0415
     form = urllib.parse.parse_qs((await request.body()).decode("utf-8", "replace"))
     code = (form.get("code") or [""])[0].strip()
-    c = paths.read_config()
+    c = paths.read_user_config()
     m = c.setdefault("mobile", {})
     if not m.get("enabled") or not m.get("code"):
         raise HTTPException(403, "phone access is off")
@@ -1587,7 +1631,7 @@ def mobile_status(request: Request):
 def mobile_set(body: MobileIn, request: Request):
     if not is_local(request):
         raise HTTPException(403, "only from the computer")
-    c = paths.read_config()
+    c = paths.read_user_config()
     m = c.setdefault("mobile", {})
     m["enabled"] = bool(body.enabled)
     if body.enabled and not m.get("code"):

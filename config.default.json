@@ -53,5 +53,11 @@
   },
   "teams": {
     "enabled": false
+  },
+  "ui": {
+    "_note": "Beta layout. Not in the owner's config.json, so the personal dashboard keeps its own.",
+    "english_only": true,
+    "overdue_tab": true,
+    "split_sources": true
   }
 }

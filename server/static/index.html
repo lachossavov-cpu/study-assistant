@@ -77,6 +77,8 @@
   @media (max-width: 420px) {
     main { padding: 12px; gap: 12px; } .panel { padding: 12px; }
     header { padding: 12px; } .brand { letter-spacing: .22em; }
+    /* four tabs (Active, Overdue, Done, News) have to fit across a phone */
+    .right .tabs { gap: 12px; } .right .tabs .tab { font-size: 10px; letter-spacing: .1em; }
   }
 
   .iconbtn { flex: 0 0 auto; align-self: center; padding: 6px 10px; font-size: 13px;
@@ -307,6 +309,17 @@
     color: var(--muted); text-transform: uppercase; white-space: nowrap;
   }
   .chip.due { color: var(--cyan); border-color: var(--cyan-dim); }
+  /* Brightspace and Teams each get their own section, so it is always clear where a
+     card came from. The row is only shown in the beta layout (ui.split_sources). */
+  .sources { display: flex; gap: 8px; margin: 0 0 12px; }
+  .sources[hidden] { display: none; }
+  .src { flex: 0 0 auto; padding: 8px 16px; font-size: 10px; letter-spacing: .22em;
+         color: var(--muted); border: 1px solid var(--line); }
+  .src.on { color: var(--cyan); border-color: var(--cyan-dim); background: rgba(79,216,232,.08); }
+  .src.off { opacity: .55; }
+  .chip.course { color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+                 text-transform: none; letter-spacing: .04em; }
+  .tab.alert { color: var(--red); }
   .chip.due.warn { color: var(--amber); border-color: rgba(255,179,71,.5); }
   .chip.due.crit { color: var(--red); border-color: rgba(255,95,109,.5); }
   .chip.status-in_progress { color: var(--amber); border-color: rgba(255,179,71,.5); }
@@ -394,8 +407,13 @@
   </section>
 
   <section class="right panel">
+    <div class="sources" id="sources" hidden>
+      <button class="src on" id="src-bs"></button>
+      <button class="src" id="src-teams"></button>
+    </div>
     <div class="tabs">
       <button class="tab on" id="tab-active"></button>
+      <button class="tab" id="tab-overdue" hidden></button>
       <button class="tab" id="tab-done"></button>
       <button class="tab" id="tab-sched"></button>
       <button class="tab" id="tab-news"></button>
@@ -581,6 +599,13 @@ const I18N = {
     updNeedsDownload: (v) => `Version ${v} needs a fresh download — this copy is too old to update itself.`,
     updRolledBack: (v) => `Update ${v} did not start correctly, so the previous version is running. Nothing was lost.`,
     tabSched: 'Schedule', noSched: 'No classes in the next two weeks, or Teams is not connected.',
+    tabOverdue: (n) => n ? `Overdue (${n})` : 'Overdue', noneOverdue: 'Nothing overdue.',
+    srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · off',
+    teamsOff: 'Teams is not connected. Switch it on in Settings (⚙) to see your timetable here.',
+    teamsChecking: 'Checking Teams…',
+    teamsDone: (n) => `Teams checked — ${n} class${n === 1 ? '' : 'es'} in the next two weeks.`,
+    teamsFailed: (m) => `Could not read Teams: ${m}`,
+    teamsLogin: 'Teams needs a fresh sign-in.',
     schedToday: 'Today', schedTomorrow: 'Tomorrow', schedOnline: 'online',
     suTeams: 'Teams timetable (optional)',
     suTeamsText: 'Also show your classes from the Teams calendar. It reads your timetable only — nothing is ever sent, posted or changed in Teams. Sign in with the same button above; the first time, a Teams tab may open to finish signing in.',
@@ -689,6 +714,13 @@ const I18N = {
     updNeedsDownload: (v) => `Версия ${v} иска ново сваляне — това копие е твърде старо, за да се обнови само.`,
     updRolledBack: (v) => `Обновление ${v} не тръгна правилно, затова върви предишната версия. Нищо не е загубено.`,
     tabSched: 'Разписание', noSched: 'Няма часове през следващите две седмици или Teams не е свързан.',
+    tabOverdue: (n) => n ? `Изтекли (${n})` : 'Изтекли', noneOverdue: 'Няма изтекли.',
+    srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · изкл.',
+    teamsOff: 'Teams не е свързан. Включи го от Настройки (⚙), за да виждаш разписанието тук.',
+    teamsChecking: 'Проверявам Teams…',
+    teamsDone: (n) => `Teams е проверен — ${n} часа през следващите две седмици.`,
+    teamsFailed: (m) => `Не успях да прочета Teams: ${m}`,
+    teamsLogin: 'Teams иска нов вход.',
     schedToday: 'Днес', schedTomorrow: 'Утре', schedOnline: 'онлайн',
     suTeams: 'Разписание от Teams (по желание)',
     suTeamsText: 'Показвай и часовете си от календара на Teams. Чете само разписанието ти — нищо не се праща, публикува или променя в Teams. Влез със същия бутон горе; първия път може да се отвори таб на Teams, за да довършиш входа.',
@@ -701,6 +733,7 @@ let LANGS = [{ code: 'en', label: 'English', recognition: 'en-US' },
              { code: 'bg', label: 'Български', recognition: 'bg-BG' }];
 let STATE = null, recog = null, listening = false, retryTimer = null;
 let VIEW = 'active';                       // which tab the task list is showing
+let SOURCE = 'bs';                         // 'bs' or 'teams' — beta layout only
 const T = (k) => (I18N[LANG] || I18N.en)[k];
 
 function applyStatic() {
@@ -721,6 +754,7 @@ function applyStatic() {
   $('l-week').textContent = T('week');
   $('l-done').textContent = T('done');
   $('offline').textContent = T('offline');
+  $('lang').hidden = LANGS.length < 2;      // the beta is English only
   applyForms();
   const next = LANGS[(LANGS.findIndex(l => l.code === LANG) + 1) % LANGS.length];
   $('lang').textContent = next.code.toUpperCase();
@@ -820,23 +854,78 @@ async function load(focusId) {
   $('s-over').textContent = STATE.counts.overdue;
   $('s-week').textContent = STATE.counts.week;
   $('s-done').textContent = STATE.counts.done;
+  // A voice command can point at a task that is not in the tab being shown (an overdue
+  // one, now that those have their own tab). Go to where it is, or it cannot be found.
+  const focus = focusId && taskById(focusId);
+  if (focus) {
+    SOURCE = 'bs';
+    VIEW = (STATE.done || []).some(x => x.id === focusId) ? 'done'
+      : ui().overdue_tab && isOverdue(focus) ? 'overdue' : 'active';
+  }
   applyTabs();
   renderTasks(focusId);
   paintCountdown();
 }
 
+function ui() { return (STATE && STATE.ui) || {}; }
+const isOverdue = t => t.days_left !== null && t.days_left !== undefined && t.days_left < 0;
+function overdueRows() { return (STATE.tasks || []).filter(isOverdue); }
+/* With the Overdue tab on, an overdue task lives there and only there — otherwise it
+   sits at the top of Active and buries what can still be done on time. */
+function activeRows() {
+  return ui().overdue_tab ? (STATE.tasks || []).filter(t => !isOverdue(t)) : (STATE.tasks || []);
+}
+
 function applyTabs() {
+  const u = ui(), split = !!u.split_sources;
+  const teams = !!(STATE && (STATE.features || {}).teams);
+  // keep VIEW and SOURCE consistent with what is switched on
+  if (!u.overdue_tab && VIEW === 'overdue') VIEW = 'active';
+  if (split) {
+    if (SOURCE === 'teams') VIEW = 'sched';
+    else if (VIEW === 'sched') VIEW = 'active';
+  } else if (!teams && VIEW === 'sched') VIEW = 'active';
+
+  $('sources').hidden = !split;
+  $('src-bs').textContent = T('srcBrightspace');
+  $('src-teams').textContent = teams ? T('srcTeams') : T('srcTeamsOff');
+  $('src-teams').classList.toggle('off', !teams);
+  $('src-bs').classList.toggle('on', split && SOURCE === 'bs');
+  $('src-teams').classList.toggle('on', split && SOURCE === 'teams');
+
+  const bsTabs = !split || SOURCE === 'bs';
+  for (const id of ['tab-active', 'tab-done', 'tab-news']) $(id).hidden = !bsTabs;
+  $('tab-overdue').hidden = !bsTabs || !u.overdue_tab;
+  $('tab-sched').hidden = split ? SOURCE !== 'teams' : !teams;
+
+  const over = STATE && u.overdue_tab ? overdueRows().length : 0;
   $('tab-active').textContent = T('tabActive');
+  $('tab-overdue').textContent = T('tabOverdue')(over);
+  $('tab-overdue').classList.toggle('alert', over > 0);
   $('tab-done').textContent = T('tabDone')(STATE ? (STATE.done || []).length : 0);
   const unseen = STATE ? (STATE.announcements || []).filter(n => !n.seen).length : 0;
   $('tab-news').textContent = T('tabNews')(unseen);
-  $('tab-sched').textContent = T('tabSched');
-  $('tab-sched').hidden = !(STATE && (STATE.features || {}).teams);
-  $('tab-sched').classList.toggle('on', VIEW === 'sched');
   $('tab-news').style.color = unseen ? 'var(--amber)' : '';
-  $('tab-active').classList.toggle('on', VIEW === 'active');
-  $('tab-done').classList.toggle('on', VIEW === 'done');
-  $('tab-news').classList.toggle('on', VIEW === 'news');
+  $('tab-sched').textContent = T('tabSched');
+  for (const [id, v] of [['tab-active', 'active'], ['tab-overdue', 'overdue'], ['tab-done', 'done'],
+                         ['tab-news', 'news'], ['tab-sched', 'sched']]) {
+    $(id).classList.toggle('on', VIEW === v);
+  }
+}
+
+function setSource(src) {
+  SOURCE = src;
+  VIEW = src === 'teams' ? 'sched' : 'active';
+  applyTabs();
+  if (STATE) renderTasks();
+}
+
+/* Short enough for a chip: "IB-B Challenges of Internationalisation 2026-27 P1 Breda"
+   is the full Brightspace name, and the card only needs to say which course. */
+function courseChip(t) {
+  if (!t.course || !STATE || (STATE.courses_count || 0) < 2) return '';
+  const name = t.course.length > 34 ? t.course.slice(0, 33) + '…' : t.course;
+  return `<span class="chip course" title="${esc(t.course)}">${esc(name)}</span>`;
 }
 
 /* The name is the user's own. JARVIS is only what it is called until they change it,
@@ -854,6 +943,7 @@ function applyProfile() {
 
 function renderSchedule() {
   const box = $('tasks');
+  if (!(STATE.features || {}).teams) { box.innerHTML = `<div class="empty">${T('teamsOff')}</div>`; return; }
   const rows = (STATE.schedule || []).filter(e => e.start);
   if (!rows.length) { box.innerHTML = `<div class="empty">${T('noSched')}</div>`; return; }
   const dayKey = iso => new Date(iso).toDateString();
@@ -929,10 +1019,10 @@ function renderTasks(focusId) {
   if (VIEW === 'news') return renderNews();
   if (VIEW === 'sched') return renderSchedule();
   const box = $('tasks');
-  const done = VIEW === 'done';
-  const rows = done ? (STATE.done || []) : (STATE.tasks || []);
+  const done = VIEW === 'done', overdue = VIEW === 'overdue';
+  const rows = done ? (STATE.done || []) : overdue ? overdueRows() : activeRows();
   if (!rows.length) {
-    box.innerHTML = `<div class="empty">${done ? T('noneDone') : T('empty')}</div>`;
+    box.innerHTML = `<div class="empty">${done ? T('noneDone') : overdue ? T('noneOverdue') : T('empty')}</div>`;
     return;
   }
   box.innerHTML = rows.map(t => {
@@ -950,6 +1040,7 @@ function renderTasks(focusId) {
     <div class="task ${cls}" data-id="${t.id}">
       <div class="task-head">
         <span class="task-title">${esc(t.title)}</span>
+        ${courseChip(t)}
         ${t.weight ? `<span class="chip">${esc(String(t.weight).replace(/\s*\([^)]*\)/, ''))}</span>` : ''}
         ${done
           ? `<span class="chip ok">${T('completedOn')} ${esc(stampOf(t.completed) || '')}</span>`
@@ -1750,7 +1841,8 @@ async function requestSync(opts) {
     const r = await fetch(q, { method: 'POST' });
     if (!r.ok) return;
     const j = await r.json();
-    if (!j.autosync && !j.queued) { if (force) log('me', T('syncFresh')); return; }
+    if (j.teams) followTeams();
+    if (!j.autosync && !j.queued) { if (force && !j.teams) log('me', T('syncFresh')); return; }
     if (j.autosync) { log('me', T('syncing')); followAutosync(speakChanges); }
     if (!j.queued) return;
     // A queued request is not a running one. If no Claude session is holding
@@ -1786,6 +1878,32 @@ async function speakWhenQuiet(text, key) {
   while (speech.key && Date.now() < end) await new Promise(r => setTimeout(r, 400));
   if (Date.now() >= end) { log('me', text); return; }   // gave up waiting — at least show it
   say(text, { btn: $('report'), key: key || 'syncdelta' });
+}
+
+/* Teams is read after Brightspace — they share one browser and take turns — so this
+   can wait a while before its own check even starts. One follower at a time. */
+let teamsFollowing = false;
+async function followTeams() {
+  if (teamsFollowing) return;
+  teamsFollowing = true;
+  log('me', T('teamsChecking'));
+  try {
+    for (let i = 0; i < 180; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      let s;
+      try { s = await (await fetch('/api/teams')).json(); } catch (e) { return; }
+      if (s.state === 'running') continue;
+      const r = s.result || {};
+      if (!r.ok) {
+        if (r.reason === 'login') logAction('err', T('teamsLogin'), T('loginBtn'));
+        else log('err', T('teamsFailed')(r.message || r.reason || '?'));
+        return;
+      }
+      log('me', T('teamsDone')(r.count || 0));
+      await load();
+      return;
+    }
+  } finally { teamsFollowing = false; }
 }
 
 /* The unattended check runs in a thread on the server, so the page follows it here
@@ -1871,6 +1989,15 @@ $('tab-active').addEventListener('click', () => setView('active'));
 $('tab-done').addEventListener('click', () => setView('done'));
 $('tab-news').addEventListener('click', () => setView('news'));
 $('tab-sched').addEventListener('click', () => setView('sched'));
+$('tab-overdue').addEventListener('click', () => setView('overdue'));
+$('src-bs').addEventListener('click', () => setSource('bs'));
+$('src-teams').addEventListener('click', () => setSource('teams'));
+// the red OVERDUE counter is the obvious thing to click to see them
+$('s-over').parentElement.addEventListener('click', () => {
+  if (!ui().overdue_tab) return;
+  SOURCE = 'bs';
+  setView('overdue');
+});
 $('ask-status').addEventListener('click', showPending);
 $('modal-cancel').addEventListener('click', cancelOldest);
 $('modal-send').addEventListener('click', () => { if (modalSend) modalSend($('modal-text').value); });
@@ -1902,7 +2029,7 @@ document.addEventListener('keydown', e => {
   }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.code === 'KeyM') { e.preventDefault(); toggleMic(); }
-  if (e.code === 'KeyL') { e.preventDefault(); $('lang').click(); }
+  if (e.code === 'KeyL' && !$('lang').hidden) { e.preventDefault(); $('lang').click(); }
 });
 
 (async function boot() {
@@ -1922,11 +2049,9 @@ document.addEventListener('keydown', e => {
   // where Brightspace gets checked for new announcements and assignments. The server
   // decides whether it is worth it (report.sync_on_start_after_minutes); restarting
   // twice in a row does not queue two checks.
-  if (STATE && (STATE.assistant || {}).onboarded) {
-    requestSync({ onStart: true });
-    if ((STATE.features || {}).teams) fetch('/api/teams/sync', { method: 'POST' })
-      .then(() => setTimeout(load, 8000)).catch(() => {});
-  }
+  // Teams is started by the same call (server side), after Brightspace, so the two never
+  // fight over the browser.
+  if (STATE && (STATE.assistant || {}).onboarded) requestSync({ onStart: true });
   checkUpdate();
   setTimeout(checkUpdate, 45000);          // the download finishes after the page is up
   setInterval(checkUpdate, 30 * 60000);
