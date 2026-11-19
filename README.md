@@ -5,7 +5,8 @@ it out loud. Early access, built by a student for classmates.
 
 **Download:** https://lachossavov-cpu.github.io/study-assistant/
 
-- Runs entirely on your own computer. Nothing is uploaded.
+- Runs on your own computer. Your tasks and notes stay there; to write the summary and
+  steps under each assignment, its documents are sent to the summary service and Anthropic.
 - You sign in yourself, on Brightspace's and Microsoft's own pages; no password is stored.
 - Optional read-only Teams timetable, and a phone view over your home Wi-Fi.
 - Updates itself from this repository's releases; a broken update rolls back on its own.

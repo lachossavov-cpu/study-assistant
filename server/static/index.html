@@ -471,6 +471,7 @@
     <div class="step" id="su-teams">
       <label class="field"><span id="su-l-teams"></span></label>
       <p id="su-teams-text"></p>
+      <p id="su-briefs-note" style="opacity:.8"></p>
       <div class="modal-actions"><button id="su-teams-toggle"></button></div>
     </div>
     <div class="step" id="su-phone">
@@ -623,6 +624,10 @@ const I18N = {
     noDeadlineGroup: (n) => `No deadline (${n})`,
     resitGroup: (n) => `Resits — only if you need them (${n})`,
     syncSubmitted: (t) => `Handed in on Brightspace, so marked done: ${t}`,
+    briefsWriting: 'Writing summaries and steps for new assignments…',
+    briefsDone: (n) => `Summaries and steps ready for ${n} assignment${n === 1 ? '' : 's'}.`,
+    briefsFailed: (t, why) => `Could not write the summary for ${t}: ${why}`,
+    suBriefsNote: 'To write the summary and steps under each assignment, its documents from Brightspace are sent to the assistant's summary service and to Anthropic (Claude). Nothing else about you is sent. Each assignment is summarised once and shared with classmates in the same course.',
     srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · off',
     teamsOff: 'Teams is not connected. Switch it on in Settings (⚙) to see your timetable here.',
     teamsChecking: 'Checking Teams…',
@@ -746,6 +751,10 @@ const I18N = {
     noDeadlineGroup: (n) => `Без срок (${n})`,
     resitGroup: (n) => `Поправки — само ако ти трябват (${n})`,
     syncSubmitted: (t) => `Предадено в Brightspace, затова е отбелязано като готово: ${t}`,
+    briefsWriting: 'Пиша описания и стъпки за новите задания…',
+    briefsDone: (n) => `Описания и стъпки са готови за ${n} задания.`,
+    briefsFailed: (t, why) => `Не успях да напиша описанието на ${t}: ${why}`,
+    suBriefsNote: 'За да се напишат описанието и стъпките под всяко задание, документите му от Brightspace се пращат на услугата за описания и на Anthropic (Claude). Нищо друго за теб не се праща. Всяко задание се обобщава веднъж и е общо за съучениците от същия курс.',
     srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · изкл.',
     teamsOff: 'Teams не е свързан. Включи го от Настройки (⚙), за да виждаш разписанието тук.',
     teamsChecking: 'Проверявам Teams…',
@@ -1689,6 +1698,7 @@ function applyForms() {
   set('su-find', 'suFind'); set('su-save', 'suSave'); set('su-close', 'close');
   set('su-phone-text', 'suPhoneText');
   set('su-l-teams', 'suTeams'); set('su-teams-text', 'suTeamsText');
+  set('su-briefs-note', 'suBriefsNote');
   set('fb-title', 'fbTitle'); set('fb-l-liked', 'fbLiked'); set('fb-l-annoyed', 'fbAnnoyed');
   set('fb-l-quote', 'fbQuote'); set('fb-l-name', 'fbName'); set('fb-l-may', 'fbMay');
   set('fb-send', 'fbSend'); set('fb-close', 'close');
@@ -2005,6 +2015,30 @@ async function followTeams() {
   } finally { teamsFollowing = false; }
 }
 
+/* Summaries are written after the Brightspace check, and can take a few minutes. */
+let briefsFollowing = false;
+async function followBriefs() {
+  if (briefsFollowing) return;
+  briefsFollowing = true;
+  let told = false;
+  try {
+    for (let i = 0; i < 600; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      let s;
+      try { s = await (await fetch('/api/briefs')).json(); } catch (e) { return; }
+      if (s.state === 'running') {
+        if (!told && i > 2) { told = true; log('me', T('briefsWriting')); }
+        continue;
+      }
+      const r = s.result || {};
+      const n = (r.written || []).length + (r.stored || []).length;
+      if (n) { log('me', T('briefsDone')(n)); await load(); }
+      (r.failed || []).forEach(f => log('err', T('briefsFailed')(f.title || '?', f.why || '?')));
+      return;
+    }
+  } finally { briefsFollowing = false; }
+}
+
 /* The unattended check runs in a thread on the server, so the page follows it here
    rather than holding the POST open for half a minute. */
 async function followAutosync(speakChanges) {
@@ -2039,6 +2073,7 @@ async function followAutosync(speakChanges) {
       spoken.push(T('spokenNewFolder')(f.title, spokenDate(f.due)));
     });
     (res.submitted || []).forEach(t => bits.push(T('syncSubmitted')(t)));
+    if (res.briefs === 'started') followBriefs();
     (res.news || []).forEach(n => {
       bits.push(T('syncNews')(n.title));
       spoken.push(T('spokenNews')(n.title));

@@ -36,7 +36,7 @@ STATIC = ROOT / "server" / "static"
 
 # the program, and nothing that belongs to a person
 PROGRAM_TOOLS = ["paths.py", "tasks.py", "brief.py", "speak.py", "ask.py", "cdp.py",
-                 "autosync.py", "teams.py", "updater.py"]
+                 "autosync.py", "teams.py", "updater.py", "briefs.py"]
 # third-party libraries the payload uses. The packager cannot see the payload's imports
 # (it is loaded from files, not compiled in), so each is collected whole.
 SHELL_LIBS = ["fastapi", "starlette", "uvicorn", "pydantic", "pydantic_core", "anyio",
@@ -65,9 +65,12 @@ FIRST RUN
   3. Press "Find my courses" and tick the ones to follow.
 
 GOOD TO KNOW
-  - Everything stays on your computer. Nothing is uploaded anywhere.
-    The only thing that leaves is the text being read aloud, which goes to
-    Microsoft's voice service to be turned into speech.
+  - Your tasks, courses, timetable and notes stay on your computer.
+    Two things leave it: the text being read aloud (to Microsoft's voice
+    service), and each assignment's documents, which go to the app's summary
+    service and to Anthropic (Claude) to write the summary and steps. Nothing
+    about you goes with them. To switch summaries off, set
+    "features": {{"briefs": false}} in config.json.
   - It updates itself. When it starts it looks for a newer version on the project's
     GitHub page, downloads it, and uses it the next time you open the app. You do not
     need to download anything again. To switch this off, set "update": {{"auto": false}}

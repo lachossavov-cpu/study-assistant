@@ -21,3 +21,10 @@ __pycache__/
 # Notes and tooling for the owner's own Claude sessions — they describe one person's course
 /CLAUDE.md
 /.claude/
+
+# The briefs server: dependencies, local secrets and test leftovers
+/briefs-server/node_modules/
+/briefs-server/.dev.vars
+/briefs-server/.wrangler/
+/briefs-server/.test-run/
+/briefs-server/.test-wrangler.log

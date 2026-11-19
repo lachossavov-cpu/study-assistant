@@ -87,7 +87,8 @@ FETCH_JS = r"""
       const walk = (m, path) => {
         const here = path.concat([m.ModuleId]);
         for (const x of (m.Topics || [])) rows.push({id: x.TopicId, title: x.Title,
-          type: x.TypeIdentifier, item: x.ToolItemId, hidden: !!x.IsHidden, path: here});
+          type: x.TypeIdentifier, item: x.ToolItemId, hidden: !!x.IsHidden, path: here,
+          url: x.Url, mod: x.LastModifiedDate});
         for (const s of (m.Modules || [])) walk(s, here);
       };
       t.Modules.forEach(m => walk(m, []));
@@ -233,6 +234,18 @@ def fetch():
     if not raw:
         return {"ok": False, "reason": "empty", "message": "Brightspace returned nothing."}
     data = json.loads(raw)
+    if _denied(data):
+        # A tab left open for hours shows Brightspace while its sign-in has lapsed, and
+        # every API call answers 403. Loading a page again usually renews it silently
+        # (seen: 403 everywhere, one reload, 200) — try that once before asking a person.
+        try:
+            cdp.navigate(tgt, cdp.home_url(), timeout=40)
+            time.sleep(3)
+            tgt = cdp.find(cdp.bs_host()) or tgt
+            raw, err = _evaluate_settled(tgt, js)
+            data = json.loads(raw) if raw else data
+        except Exception:                                    # noqa: BLE001
+            pass
     if any(h in (data.get("host") or "") for h in cdp.LOGIN_HOSTS):
         return {"ok": False, "reason": "login",
                 "message": "The Brightspace session has expired. Press Sign in."}
@@ -241,6 +254,11 @@ def fetch():
                 "message": "Brightspace refused access — a fresh sign-in is needed."}
     data["ok"] = True
     return data
+
+
+def _denied(data) -> bool:
+    return (any(h in (data.get("host") or "") for h in cdp.LOGIN_HOSTS)
+            or (isinstance(data.get("folders"), dict) and data["folders"].get("__err") in (403, 401)))
 
 
 def _brightspace_tab():
@@ -373,6 +391,9 @@ def auto_fields(f, data, names, fallback_ou) -> dict:
                   for a in (f.get("links") or []) if str(a.get("url") or "").startswith("http")]
     return {
         "auto": True,
+        # what the brief service needs to find and read the same documents again
+        "brief_docs": [{"id": d["id"], "title": d["title"], "path": d.get("url"),
+                        "mod": d.get("mod")} for d in docs if d.get("url")],
         "description": (f.get("instructions") or "").strip(),
         "requirements": [],
         "resources": resources,

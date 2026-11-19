@@ -7,6 +7,7 @@
 import argparse
 import contextlib
 import io
+import zipfile
 import json
 import os
 import re
@@ -1052,6 +1053,138 @@ def test_multi_course():
            "поправки, чието първо предаване го има (само в същия курс): ")
         return "две поправки отбелязани; несдадено първо и чужд курс — не"
     check("поправка на вече предадена задача се разпознава", resits_of_handed_in)
+
+    # ---------------------------------------------------------------- briefs (summaries)
+    import briefs
+
+    def doc(i, mod="2026-09-01"):
+        return {"id": i, "title": f"Doc {i}", "path": f"/content/x/doc{i}.pdf", "mod": mod}
+
+    def brief_keys():
+        keep = briefs.cdp.bs_host
+        briefs.cdp.bs_host = lambda: "brightspace.example.nl"
+        try:
+            sit = {"title": "PPD Mind Movie SIT (first opportunity)", "source_unit": "1", "brief_docs": [doc(1), doc(2)]}
+            resit = {"title": "PPD Mind Movie RESIT (second opportunity)", "source_unit": "1", "brief_docs": [doc(2), doc(1)]}
+            other = {"title": "Group Report - Sit", "source_unit": "1", "brief_docs": [doc(1), doc(2)]}
+            changed = {"title": sit["title"], "source_unit": "1", "brief_docs": [doc(1, "2026-10-01"), doc(2)]}
+            k = briefs.brief_key
+            eq(k(sit), k(resit), "поправката не дели описанието на първия опит: ")
+            assert k(sit) != k(other), "две задания от един блок получиха едно описание"
+            assert k(sit) != k(changed), "сменен документ не дава ново описание"
+            eq(k({"title": "x", "brief_docs": []}), None, "без документи няма ключ: ")
+        finally:
+            briefs.cdp.bs_host = keep
+        return "поправка = първи опит; различно задание или сменен документ = нов ключ"
+    check("ключът на описанието е общ за класа, но не за различни задания", brief_keys)
+
+    def brief_text():
+        txt = briefs.format_brief({"summary": "Make a market profile.",
+                                   "steps": ["Read the brief", "Pick a country"],
+                                   "watch_out": ["No sources"], "hand_in": "One PDF in the dropbox."})
+        assert "1. Read the brief\n2. Pick a country" in txt, txt
+        assert "- No sources" in txt and txt.endswith("Hand in: One PDF in the dropbox."), txt
+        assert not re.search(r"[Ѐ-ӿ]", txt), "кирилица в описанието"
+        return "обобщение, номерирани стъпки, какво губи точки, какво се предава"
+    check("описанието се показва като стъпки, ред по ред", brief_text)
+
+    def office_files():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("word/document.xml", "<w:document><w:body><w:p><w:r><w:t>Write a report</w:t></w:r></w:p>"
+                       "<w:p><w:r><w:t>Max 2000 words &amp; APA</w:t></w:r></w:p></w:body></w:document>")
+        name, data, mime = briefs.prepare("Instruction.docx", buf.getvalue(), "application/vnd.openxmlformats-officedocument")
+        eq((name, mime), ("Instruction.txt", "text/plain"), "")
+        eq(data.decode(), "Write a report\nMax 2000 words & APA", "текст от docx: ")
+        eq(briefs.prepare("a.pdf", b"%PDF-1.4 x", "application/pdf")[2], "application/pdf", "")
+        eq(briefs.prepare("a.exe", b"MZ", "application/octet-stream"), None, "непознат файл: ")
+        return "PDF се праща както е; Word/PowerPoint стават текст; другото се пропуска"
+    check("документите се подготвят за услугата", office_files)
+
+    def briefs_against_fake_service():
+        """Целият път срещу фалшива услуга: от склада, ново описание, таван за деня."""
+        import http.server as hs
+        calls = {"get": 0, "upload": 0, "brief": 0}
+        store = {}
+
+        class Svc(hs.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def send(self, code, obj):
+                b = json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def do_GET(self):
+                # Cloudflare blocks Python's default user agent (error 1010)
+                assert self.headers.get("user-agent", "").startswith("StudyAssistant/"), self.headers.get("user-agent")
+                calls["get"] += 1
+                key = self.path.split("key=")[-1]
+                return self.send(200, store[key]) if key in store else self.send(404, {"error": "none"})
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("content-length", 0)))
+                assert self.headers.get("user-agent", "").startswith("StudyAssistant/")
+                if self.path == "/upload":
+                    calls["upload"] += 1
+                    assert b"%PDF" in body
+                    return self.send(200, {"ticket": f"file_{calls['upload']}.sig"})
+                calls["brief"] += 1
+                req = json.loads(body)
+                if calls["brief"] > 1:
+                    return self.send(429, {"error": "daily limit reached, try tomorrow"})
+                store[req["key"]] = {"summary": f"About {req['title']}", "steps": ["Do it"], "watch_out": [],
+                                     "hand_in": "PDF", "sources": [t["name"] for t in req["tickets"]]}
+                return self.send(200, store[req["key"]])
+
+        srv = hs.ThreadingHTTPServer(("127.0.0.1", 0), Svc)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        keep = briefs.cdp.bs_host
+        briefs.cdp.bs_host = lambda: "brightspace.example.nl"
+        fetched = []
+
+        def fake_fetch(docs):
+            fetched.append(len(docs))
+            return [(Path(d["path"]).name, b"%PDF-1.4 doc", "application/pdf") for d in docs]
+        try:
+            db = {"tasks": [
+                {"id": "a", "title": "Essay", "auto": True, "status": "todo", "source_unit": "1", "brief_docs": [doc(1)]},
+                {"id": "b", "title": "Pitch", "auto": True, "status": "todo", "source_unit": "1", "brief_docs": [doc(2)]},
+                {"id": "c", "title": "Mine", "status": "todo", "source_unit": "1", "brief_docs": [doc(3)]},
+                {"id": "d", "title": "Old", "auto": True, "status": "done", "source_unit": "1", "brief_docs": [doc(4)]},
+            ]}
+            r = briefs.ensure_briefs(db, fetch_docs=fake_fetch, base=base)
+            eq(r["written"], ["Essay"], "написани: ")
+            eq([f["why"] for f in r["failed"]], ["daily limit reached, try tomorrow"], "таванът: ")
+            t = db["tasks"][0]
+            assert t["instructions"].startswith("About Essay") and "1. Do it" in t["instructions"], t["instructions"]
+            assert "Claude Opus 5.5" in t["instructions_source"], t["instructions_source"]
+            eq(db["tasks"][2].get("instructions"), None, "ръчно писана задача получи описание: ")
+            eq(db["tasks"][3].get("instructions"), None, "готова задача получи описание: ")
+
+            # a classmate: same key -> from the store, nothing downloaded or paid for
+            mate = {"tasks": [{"id": "a", "title": "Essay", "auto": True, "status": "todo", "source_unit": "1",
+                               "brief_docs": [doc(1)]}]}
+            before = dict(calls), len(fetched)
+            r2 = briefs.ensure_briefs(mate, fetch_docs=fake_fetch, base=base)
+            eq(r2["stored"], ["Essay"], "съученик: ")
+            eq((calls["upload"], calls["brief"], len(fetched)), (before[0]["upload"], before[0]["brief"], before[1]),
+               "съученикът плати или изтегли наново: ")
+            # and a second pass on the same list asks nothing at all
+            g = calls["get"]
+            briefs.ensure_briefs(mate, fetch_docs=fake_fetch, base=base)
+            eq(calls["get"], g, "вече описаното се пита пак: ")
+            eq(briefs.ensure_briefs(mate, fetch_docs=fake_fetch, base="")["written"], [], "без адрес е изключено: ")
+        finally:
+            briefs.cdp.bs_host = keep
+            srv.shutdown()
+        return "1 написано, съученикът го получава без плащане, таванът спира"
+    check("описанията: от склада, ново, таван — срещу фалшива услуга", briefs_against_fake_service)
 
 
 def test_server(proc, network):

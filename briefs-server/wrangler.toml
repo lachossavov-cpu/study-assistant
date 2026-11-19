@@ -1,0 +1,23 @@
+name = "study-assistant-briefs"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Where briefs and the daily counters are kept. Create it once with:
+#   npx wrangler kv namespace create BRIEFS
+# and put the id it prints here.
+[[kv_namespaces]]
+binding = "BRIEFS"
+id = "32c845e2f44c47f3b82a845f44d45e61"
+
+# Clears uploads that never became a brief.
+[triggers]
+crons = ["17 * * * *"]
+
+[vars]
+DAILY_LIMIT = "60"
+PER_IP_LIMIT = "15"
+
+# Secrets — never in this file. Set them once with:
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put TICKET_SECRET

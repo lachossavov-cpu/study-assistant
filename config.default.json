@@ -5,7 +5,8 @@
     "onboarded": false
   },
   "features": {
-    "ai": false
+    "ai": false,
+    "briefs": true
   },
   "brightspace": {
     "base_url": "https://brightspace.avans.nl"
@@ -61,5 +62,9 @@
     "overdue_tab": true,
     "split_sources": true,
     "group_undated": true
+  },
+  "briefs": {
+    "_note": "The summary service (briefs-server/). Empty url = off.",
+    "url": "https://study-assistant-briefs.briefs-server.workers.dev"
   }
 }

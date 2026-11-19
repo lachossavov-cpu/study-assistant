@@ -366,6 +366,41 @@ def autosync_enabled() -> bool:
 BROWSER_LOCK = threading.Lock()
 
 
+BRIEFS = {"state": "idle", "at": None, "result": None}
+BRIEFS_LOCK = threading.Lock()
+
+
+def _briefs_worker():
+    """Summaries and steps for new assignments (tools/briefs.py). After the Brightspace
+    check, never inside it: writing can take minutes, and the deadlines must not wait."""
+    import briefs                                     # noqa: PLC0415
+    try:
+        with BROWSER_LOCK:                            # it downloads through the same browser
+            res = briefs.run()
+    except Exception as e:                            # noqa: BLE001
+        res = {"written": [], "stored": [], "failed": [{"title": "", "why": str(e)[:200]}]}
+    with BRIEFS_LOCK:
+        BRIEFS.update(state="done", at=datetime.now().isoformat(timespec="seconds"), result=res)
+
+
+def start_briefs() -> bool:
+    import briefs                                     # noqa: PLC0415
+    if not briefs.service_url():
+        return False
+    with BRIEFS_LOCK:
+        if BRIEFS["state"] == "running":
+            return False
+        BRIEFS.update(state="running", at=datetime.now().isoformat(timespec="seconds"), result=None)
+    threading.Thread(target=_briefs_worker, daemon=True).start()
+    return True
+
+
+@app.get("/api/briefs")
+def briefs_status():
+    with BRIEFS_LOCK:
+        return dict(BRIEFS)
+
+
 def _autosync_worker(lang: str):
     import autosync                                   # noqa: PLC0415 - worker-only
     try:
@@ -373,6 +408,8 @@ def _autosync_worker(lang: str):
             res = autosync.run(lang=lang)
     except Exception as e:                            # noqa: BLE001 - never kill the thread
         res = {"ok": False, "reason": "crash", "message": str(e)[:300]}
+    if res.get("ok"):
+        res["briefs"] = "started" if start_briefs() else None
     # Brightspace unreachable from this profile? Then a Claude session driving the
     # user's own Chrome is the remaining way in — queue it rather than going quiet.
     if ai_on() and not res.get("ok") and res.get("reason") in (
