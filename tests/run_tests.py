@@ -944,6 +944,22 @@ def test_multi_course():
         return f"{len(cdp.CHROME_CANDIDATES)} места, където се търси браузър (Chrome, после Edge)"
     check("профилът на браузъра не зависи от LOCALAPPDATA и познава Edge", cross_platform)
 
+    def dashboard_script_parses():
+        """Една синтактична грешка спира ЦЯЛАТА страница — и ни един тест на сървъра не я
+        вижда. 0.1.6 излезе така: апостроф в „assistant's" затвори низа и таблото остана
+        празно при всички, които се обновиха."""
+        node = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
+        if not Path(node).is_file():
+            raise AssertionError("няма node за проверка на JavaScript — инсталирай Node.js LTS")
+        page = (ROOT / "server" / "static" / "index.html").read_text(encoding="utf-8")
+        js = "\n".join(re.findall(r"<script>(.*?)</script>", page, re.S))
+        f = TMP / "dashboard_check.js"
+        f.write_text(js, encoding="utf-8")
+        out = subprocess.run([node, "--check", str(f)], capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr.strip().splitlines()[:4]
+        return f"{len(js) // 1024} KB JavaScript без синтактични грешки"
+    check("JavaScript-ът на таблото се разчита (node --check)", dashboard_script_parses)
+
     def english_dashboard_strings():
         page = (ROOT / "server" / "static" / "index.html").read_text(encoding="utf-8")
         en = page[page.index("\n  en: {"):page.index("\n  bg: {")]
