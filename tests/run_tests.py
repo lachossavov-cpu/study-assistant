@@ -728,7 +728,8 @@ def test_shared_copy():
 
         def beta_layout():
             _, st = call("/api/state")
-            eq(st["ui"], {"english_only": True, "overdue_tab": True, "split_sources": True},
+            eq(st["ui"], {"english_only": True, "overdue_tab": True, "split_sources": True,
+                          "group_undated": True},
                "ui в бетата: ")
             _, st = call("/api/state?lang=bg")
             eq(st["lang"], "en", "бетата прие ?lang=bg: ")
@@ -943,6 +944,87 @@ def test_multi_course():
         eq(got, [0, 1, "done"], "преди / след освобождаване / състояние: ")
         return "Teams изчаква браузъра, после минава"
     check("Brightspace и Teams не карат браузъра едновременно", browser_takes_turns)
+
+    # The content tree as Brightspace lays it out at Avans (seen on EFM and COI): the
+    # folder is a link in a "Hand in" module, the brief is in a sibling module.
+    TOC = [
+        {"id": 1, "title": "EFM Module Manual 2026-2027", "type": "File", "item": None, "path": [10, 11]},
+        {"id": 2, "title": "Assessment Form EFM Block I", "type": "File", "item": None, "path": [20, 21]},
+        {"id": 3, "title": "Assessment Instruction EFM Block I", "type": "File", "item": None, "path": [20, 21]},
+        {"id": 4, "title": "EFM Block I: Sit PG Assessment", "type": "Link", "item": 501, "path": [20, 22]},
+        {"id": 5, "title": "Week 1 - Session 1 - Handout", "type": "File", "item": None, "path": [20, 23]},
+        {"id": 6, "title": "Assessment Instruction Block II", "type": "File", "item": None, "path": [30, 31]},
+        {"id": 7, "title": "Hidden assessment draft", "type": "File", "item": None, "path": [20, 21],
+         "hidden": True},
+    ]
+
+    def finds_the_brief():
+        got = [d["title"] for d in autosync.brief_documents({"id": 501, "name": "x"}, TOC)]
+        eq(got, ["Assessment Form EFM Block I", "Assessment Instruction EFM Block I"], "документи: ")
+        by_name = autosync.brief_documents({"id": 999, "name": "EFM Block I: Sit PG Assessment"}, TOC)
+        eq(len(by_name), 2, "по име, когато номерът липсва: ")
+        eq(autosync.brief_documents({"id": 777, "name": "Something else"}, TOC), [],
+           "папка без връзка в материалите трябва да не получи чуждо задание: ")
+        return "двата документа от същия блок; чужд блок, скрит файл и непозната папка — нищо"
+    check("заданието се намира до папката в материалите, без гадаене", finds_the_brief)
+
+    def refresh_and_close():
+        keep_cfg, keep_courses = autosync.cdp.cfg, autosync.cdp.courses
+        autosync.cdp.courses = lambda: [{"org_unit_id": "11", "name": "EFM"}]
+        data = {"toc": {"11": TOC}, "folders": [
+            {"ou": "11", "id": 501, "name": "EFM Block I", "due": "2030-01-10T22:59:00.000Z",
+             "instructions": "Please only submit one file per PG.", "attachments": [], "links": [],
+             "submitted": "2026-11-18T20:00:00.000Z"},
+            {"ou": "11", "id": 502, "name": "Old folder", "due": None, "instructions": "",
+             "attachments": [], "links": [], "submitted": None}]}
+        legacy = {"id": "efm", "title": "EFM Block I", "status": "todo", "dropbox_ids": [501],
+                  "description": autosync.NEW_FOLDER_DESC, "requirements": [autosync.NEW_FOLDER_REQ]}
+        mine = {"id": "mine", "title": "Group Report", "status": "todo", "dropbox_ids": [502],
+                "description": "Written by hand.", "requirements": ["APA"], "resources": [{"title": "x", "url": "y"}]}
+        try:
+            for close in (False, True):
+                autosync.cdp.cfg = (lambda c: lambda *p, default=None: (
+                    c if p == ("sync", "close_on_submission") else keep_cfg(*p, default=default)))(close)
+                db = {"tasks": [json.loads(json.dumps(legacy)), json.loads(json.dumps(mine))]}
+                closed = autosync.refresh_auto(data, db)
+                t, m = db["tasks"]
+                eq(t["requirements"], [], "заместителят остана: ")
+                eq(t["description"], "Please only submit one file per PG.", "текстът на преподавателя: ")
+                eq([r["title"] for r in t["resources"]],
+                   ["Assessment Form EFM Block I", "Assessment Instruction EFM Block I"], "документи: ")
+                assert "folder_submit_files.d2l?db=501&ou=11" in t["source_url"], t["source_url"]
+                eq(m["description"], "Written by hand.", "ръчно писана задача е пипната: ")
+                eq(m["requirements"], ["APA"], "")
+                if close:
+                    eq(t["status"], "done", "предадената не се затвори: ")
+                    eq(closed, ["EFM Block I"], "")
+                    t["status"] = "todo"                      # the person reopens it
+                    eq(autosync.refresh_auto(data, db), [], "отворената наново се затвори пак: ")
+                    eq(t["status"], "todo", "")
+                else:
+                    eq(t["status"], "todo", "личното табло затвори задача само: ")
+                    eq(closed, [], "")
+        finally:
+            autosync.cdp.cfg, autosync.cdp.courses = keep_cfg, keep_courses
+        return "текст, документи и линк; затваря само с превключвателя и само веднъж"
+    check("автоматичните задачи се опресняват, предадените се затварят", refresh_and_close)
+
+    def resits_of_handed_in():
+        db = {"tasks": [
+            {"title": "PPD Mind Movie SIT (first opportunity)", "source_unit": "1", "submitted_at": "2026-10-01T10:00"},
+            {"title": "PPD Mind Movie RESIT (second opportunity)", "source_unit": "1"},
+            {"title": "Language choice video", "source_unit": "1", "submitted_at": "2026-09-15T23:00"},
+            {"title": "Language choice video - RESIT", "source_unit": "1"},
+            {"title": "Group Report - Sit", "source_unit": "1"},
+            {"title": "Group Report  - Resit", "source_unit": "1"},
+            {"title": "Language choice video - RESIT", "source_unit": "2"},
+        ]}
+        autosync.mark_covered_resits(db)
+        flags = [bool(t.get("resit_covered")) for t in db["tasks"]]
+        eq(flags, [False, True, False, True, False, False, False],
+           "поправки, чието първо предаване го има (само в същия курс): ")
+        return "две поправки отбелязани; несдадено първо и чужд курс — не"
+    check("поправка на вече предадена задача се разпознава", resits_of_handed_in)
 
 
 def test_server(proc, network):

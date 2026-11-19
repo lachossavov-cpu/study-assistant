@@ -124,7 +124,8 @@ def ui_flags() -> dict:
     """Layout switches for the beta (config `ui`). The owner's config has none, so the
     personal dashboard keeps its own layout."""
     u = cfg().get("ui") or {}
-    return {k: bool(u.get(k)) for k in ("english_only", "overdue_tab", "split_sources")}
+    return {k: bool(u.get(k)) for k in ("english_only", "overdue_tab", "split_sources",
+                                        "group_undated")}
 
 
 def resolve_lang(lang=None):
@@ -217,6 +218,9 @@ def task_view(t, lang, course_names=None):
         "deliverables": loc.get("deliverables", []),
         "requirements": loc.get("requirements", []),
         "resources": t.get("resources", []),
+        "source_url": t.get("source_url", ""),
+        "submitted_at": t.get("submitted_at"),
+        "resit_covered": t.get("resit_covered"),
         "notes": t.get("notes", ""),
         "estimate_h": t.get("estimate_h"),
         "flags": t.get("flags", []),

@@ -55,15 +55,44 @@ FETCH_JS = r"""
   // row. A 401/403 on any of them means the session is gone and is reported as such; any
   // other error (a course with no dropbox tool answers 404) just skips that course.
   let folders = [], grades = [], quizzes = [], news = [], denied = null;
-  const skipped = [];
+  const skipped = [], toc = {};
+  // The latest moment I handed something in to this folder, or null. A group folder
+  // answers with the group's entry, which is what counts for a group assignment.
+  const mySubmission = async (OU, id) => {
+    const s = await g(`/d2l/api/le/${V}/${OU}/dropbox/folders/${id}/submissions/mysubmissions/`);
+    if (!Array.isArray(s)) return null;
+    const dates = s.flatMap(e => (e.Submissions || []).map(q => q.SubmissionDate)).filter(Boolean);
+    return dates.length ? dates.sort().pop() : null;
+  };
   for (const OU of OUS) {
     const f = await g(`/d2l/api/le/${V}/${OU}/dropbox/folders/`);
     if (f && (f.__err === 401 || f.__err === 403)) { denied = f; break; }
-    if (Array.isArray(f)) folders = folders.concat(f.map(x => ({
-      ou: OU, id: x.Id, name: x.Name, due: x.DueDate,
-      pts: x.Assessment && x.Assessment.ScoreDenominator,
-      instructions: strip(x.CustomInstructions && x.CustomInstructions.Html).slice(0, 700)
-    }))); else skipped.push({ou: OU, what: 'dropbox', err: f && f.__err});
+    if (Array.isArray(f)) {
+      const subs = await Promise.all(f.map(x => mySubmission(OU, x.Id)));
+      folders = folders.concat(f.map((x, i) => ({
+        ou: OU, id: x.Id, name: x.Name, due: x.DueDate,
+        pts: x.Assessment && x.Assessment.ScoreDenominator,
+        // the teacher's whole note, not a teaser — it is often the only text there is
+        instructions: strip(x.CustomInstructions && x.CustomInstructions.Html).slice(0, 4000),
+        attachments: (x.Attachments || []).map(a => ({id: a.FileId, name: a.FileName})),
+        links: (x.LinkAttachments || []).map(a => ({name: a.LinkName, url: a.Href})),
+        submitted: subs[i]
+      })));
+    } else skipped.push({ou: OU, what: 'dropbox', err: f && f.__err});
+    // The brief is not in the folder: it is a document in the course content, next to the
+    // link to the folder. Keep just enough of the content tree to find it from Python.
+    const t = await g(`/d2l/api/le/${V}/${OU}/content/toc`);
+    if (t && Array.isArray(t.Modules)) {
+      const rows = [];
+      const walk = (m, path) => {
+        const here = path.concat([m.ModuleId]);
+        for (const x of (m.Topics || [])) rows.push({id: x.TopicId, title: x.Title,
+          type: x.TypeIdentifier, item: x.ToolItemId, hidden: !!x.IsHidden, path: here});
+        for (const s of (m.Modules || [])) walk(s, here);
+      };
+      t.Modules.forEach(m => walk(m, []));
+      toc[OU] = rows;
+    }
     const gr = await g(`/d2l/api/le/${V}/${OU}/grades/`);
     if (Array.isArray(gr)) grades = grades.concat(gr.map(i => ({
       ou: OU, name: i.Name, max: i.MaxPoints, weight: i.Weight })));
@@ -80,7 +109,7 @@ FETCH_JS = r"""
   return JSON.stringify({
     host: location.host,
     fetched: new Date().toISOString(),
-    folders: denied || folders, grades, quizzes, news, skipped
+    folders: denied || folders, grades, quizzes, news, skipped, toc
   });
 })()
 """
@@ -275,6 +304,152 @@ def my_courses():
     return data
 
 
+# What marks a document as part of an assignment's brief, by its title.
+BRIEF_RE = re.compile(r"assess|instruction|assignment|rubric|deliverable|brief|criteria|"
+                      r"grading|opdracht|beoordel|toets", re.I)
+
+
+def _norm(s) -> str:
+    return re.sub(r"\W+", " ", str(s or "").lower()).strip()
+
+
+def brief_documents(folder, topics) -> list:
+    """The course documents that hold this assignment's brief, or [] if unsure.
+
+    Brightspace keeps the brief out of the submission folder: teachers put the folder as
+    a link in a "Hand in" module and the instruction documents in a sibling module of
+    the same block (EFM: "Block I / Hand-in assignments" next to "Block I / Assessment").
+    So: find the link to THIS folder, step up to the block it sits in, and take the
+    documents in that block whose titles read like a brief.
+
+    Without the link there is no block to look in, and a course-wide guess would put
+    another assignment's instructions on this card — so nothing is returned instead.
+    """
+    topics = topics or []
+    link = next((t for t in topics if t.get("type") != "File"
+                 and str(t.get("item") or "") == str(folder.get("id"))), None) \
+        or next((t for t in topics if t.get("type") != "File"
+                 and _norm(t.get("title")) == _norm(folder.get("name"))), None)
+    if not link:
+        return []
+    path = link.get("path") or []
+    block = path[:-1] if len(path) > 1 else path
+    return [t for t in topics
+            if t.get("type") == "File" and not t.get("hidden")
+            and BRIEF_RE.search(t.get("title") or "")
+            and (t.get("path") or [])[:len(block)] == block][:6]
+
+
+def folder_url(f) -> str:
+    return (f"{cdp.base_url()}/d2l/lms/dropbox/user/folder_submit_files.d2l"
+            f"?db={f['id']}&ou={f.get('ou')}")
+
+
+def auto_fields(f, data, names, fallback_ou) -> dict:
+    """Everything an automatically found task shows, built only from what Brightspace says.
+
+    No placeholder text: an empty description is honest, a line saying "not reviewed"
+    on every card is noise. The documents and the link are what a person needs to go
+    and read the brief themselves.
+    """
+    ou = str(f.get("ou") or fallback_ou)
+    v = cdp.cfg("course", "api_version", default="1.87")
+    docs = brief_documents(f, (data.get("toc") or {}).get(ou))
+    resources = [{"title": d["title"],
+                  "url": f"{cdp.base_url()}/d2l/le/content/{ou}/viewContent/{d['id']}/View"}
+                 for d in docs]
+    resources += [{"title": a["name"],
+                   "url": f"{cdp.base_url()}/d2l/api/le/{v}/{ou}/dropbox/folders/{f['id']}/attachments/{a['id']}"}
+                  for a in (f.get("attachments") or []) if a.get("id")]
+    resources += [{"title": a.get("name") or a.get("url"), "url": a["url"]}
+                  for a in (f.get("links") or []) if str(a.get("url") or "").startswith("http")]
+    return {
+        "auto": True,
+        "description": (f.get("instructions") or "").strip(),
+        "requirements": [],
+        "resources": resources,
+        "source_url": folder_url(dict(f, ou=ou)),
+        "source_unit": ou,
+        "course": names.get(ou, ""),
+    }
+
+
+def is_auto(t) -> bool:
+    """Made by this script rather than written by a person (or by Claude in the chat)."""
+    return bool(t.get("auto") or NEW_FOLDER_REQ in (t.get("requirements") or [])
+                or t.get("description") == NEW_FOLDER_DESC)
+
+
+def refresh_auto(data, db) -> list:
+    """Bring every automatically found task up to date with its folder, and close the
+    ones already handed in. Returns the titles it marked as submitted.
+
+    Tasks a person or Claude wrote are never touched — only `is_auto()` ones. Closing on
+    submission is a switch (`sync.close_on_submission`, on in the beta): the owner's own
+    list is curated by hand and must not start closing itself.
+    """
+    names = {c["org_unit_id"]: c["name"] for c in cdp.courses()}
+    fallback_ou = str(cdp.cfg("course", "org_unit_id", default="") or "")
+    close = bool(cdp.cfg("sync", "close_on_submission", default=False))
+    by_id = {int(f["id"]): f for f in (data.get("folders") or [])
+             if isinstance(f, dict) and f.get("id") is not None}
+    closed = []
+    for t in db.get("tasks", []):
+        ids = [int(x) for x in (t.get("dropbox_ids") or [])]
+        f = by_id.get(ids[0]) if ids else None
+        if f is None:
+            continue
+        if is_auto(t):
+            t.update(auto_fields(f, data, names, fallback_ou))
+        sub = iso_local(f.get("submitted"))
+        if sub:
+            t["submitted_at"] = sub
+        if not (close and sub):
+            continue
+        # once per submission: if the person reopens it, a later sync must not undo that
+        if t.get("status") in ("done", "dropped") or t.get("closed_for_submission") == sub:
+            continue
+        t["status"] = "done"
+        t["completed"] = sub
+        t["closed_for_submission"] = sub
+        t.setdefault("submissions", []).append(
+            {"at": sub, "what": "Handed in on Brightspace", "status": "submitted"})
+        closed.append(t.get("title", ""))
+    mark_covered_resits(db)
+    return closed
+
+
+RESIT_RE = re.compile(r"\bresit\b|second opportunity|2nd opportunity|herkansing", re.I)
+_SIT_WORDS = re.compile(r"\b(sit|resit|first|second|1st|2nd|opportunity|herkansing|"
+                        r"submission|box)\b", re.I)
+
+
+def _assignment_key(title) -> str:
+    """'PPD Mind Movie RESIT (second opportunity)' and 'PPD Mind Movie SIT (first
+    opportunity)' are the same assignment: drop the sit/resit words and compare the rest."""
+    return _norm(_SIT_WORDS.sub(" ", str(title or "")))
+
+
+def mark_covered_resits(db):
+    """Flag each resit whose first attempt was handed in, as `resit_covered`.
+
+    Such a resit is usually not needed, and leaving it in Overdue made Overdue mean
+    nothing. It is NOT closed or dropped: a failed first attempt is exactly when the
+    resit matters, and grades are not read here — so the page moves it to its own group
+    instead of hiding it.
+    """
+    handed_in = {}
+    for t in db.get("tasks", []):
+        if t.get("submitted_at") and not RESIT_RE.search(t.get("title") or ""):
+            handed_in[(str(t.get("source_unit") or ""), _assignment_key(t.get("title")))] = t["title"]
+    for t in db.get("tasks", []):
+        key = (str(t.get("source_unit") or ""), _assignment_key(t.get("title")))
+        if RESIT_RE.search(t.get("title") or "") and key in handed_in and not t.get("submitted_at"):
+            t["resit_covered"] = handed_in[key]
+        else:
+            t.pop("resit_covered", None)
+
+
 def diff(data, db):
     """What changed. Mechanical changes only — announcements are handled separately."""
     # A task claims every folder it owns, so no duplicate task is invented for the resit
@@ -310,17 +485,9 @@ def diff(data, db):
                 "weight": (f"{g['weight']}% of the grade, {g['max']} points"
                            if g and g.get("weight") else
                            (f"{f['pts']} points" if f.get("pts") else None)),
-                # English: this is the ORIGINAL field. Translations live in i18n, and
-                # these used to be written in Bulgarian straight into the original —
-                # which put Bulgarian in front of every beta tester.
-                "description": (f.get("instructions") or "")[:400] or NEW_FOLDER_DESC,
                 "deliverables": [f"Hand in through Brightspace dropbox #{f['id']} '{f['name']}'"],
-                "requirements": [NEW_FOLDER_REQ],
-                "resources": [],
-                "source_url": cdp.cfg("course", "lessons_url", default="") or cdp.home_url(),
-                "source_unit": str(f.get("ou") or fallback_ou),
-                "course": names.get(str(f.get("ou") or fallback_ou), ""),
                 "dropbox_ids": [int(f["id"])],
+                **auto_fields(f, data, names, fallback_ou),
             })
         elif (due and t.get("due") != due
               and primary.get(t["id"]) == int(f["id"])):
@@ -416,6 +583,7 @@ def run(dry_run=False, lang="en"):
         "moved": moved,
         "news": [{"title": n["title"], "when": n["when"]} for n in news],
         "queued": None,
+        "submitted": [],
         "dry_run": dry_run,
     }
     if dry_run:
@@ -433,6 +601,8 @@ def run(dry_run=False, lang="en"):
         t.setdefault("notes", "")
         t["first_seen"] = t["last_seen"] = tasks_mod.now()
         db["tasks"].append(t)
+    # after the new ones are in, so a folder found already handed in is closed straight away
+    result["submitted"] = refresh_auto(data, db)
 
     # Announcements are kept as they are. Nothing here interprets them — a person reads
     # them in the News tab. Newest first, capped, and never added twice.
@@ -444,7 +614,8 @@ def run(dry_run=False, lang="en"):
     entry = {"at": tasks_mod.now(), "added": len(new_tasks), "updated": len(moved),
              "changes": ([{"id": t["id"], "change": "new", "title": t["title"]} for t in new_tasks]
                          + [{"id": m["id"], "change": "due", "from": m["from"], "to": m["to"]}
-                            for m in moved]),
+                            for m in moved]
+                         + [{"change": "submitted", "title": s} for s in result["submitted"]]),
              "note": "autosync (no Claude session)"}
     db["history"] = ([entry] + db.get("history", []))[:30]
     tasks_mod.save(db)

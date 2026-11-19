@@ -320,6 +320,21 @@
   .chip.course { color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis;
                  text-transform: none; letter-spacing: .04em; }
   .tab.alert { color: var(--red); }
+  .btnlink {
+    display: inline-flex; align-items: center; padding: 7px 11px; font-size: 10px;
+    letter-spacing: .16em; text-transform: uppercase; text-decoration: none;
+    color: var(--cyan); border: 1px solid var(--cyan-dim);
+  }
+  .btnlink:hover { background: rgba(79,216,232,.10); }
+  details.undated { margin-top: 6px; }
+  details.undated > summary {
+    cursor: pointer; list-style: none; padding: 10px 2px; font-size: 10px;
+    letter-spacing: .2em; text-transform: uppercase; color: var(--muted);
+    border-top: 1px solid var(--line);
+  }
+  details.undated > summary::before { content: '▸ '; }
+  details.undated[open] > summary::before { content: '▾ '; }
+  details.undated > .task { margin-top: 9px; }
   .chip.due.warn { color: var(--amber); border-color: rgba(255,179,71,.5); }
   .chip.due.crit { color: var(--red); border-color: rgba(255,95,109,.5); }
   .chip.status-in_progress { color: var(--amber); border-color: rgba(255,179,71,.5); }
@@ -601,6 +616,11 @@ const I18N = {
     updApplied: (v, n) => `Updated to ${v}.` + (n ? ` What's new: ${n}` : ''),
     tabSched: 'Schedule', noSched: 'No classes in the next two weeks, or Teams is not connected.',
     tabOverdue: (n) => n ? `Overdue (${n})` : 'Overdue', noneOverdue: 'Nothing overdue.',
+    openBs: '↗ Open in Brightspace', briefDocs: 'Assignment documents',
+    noBriefFound: 'No brief was found next to this folder in Brightspace — open it there to read what is asked.',
+    noDeadlineGroup: (n) => `No deadline (${n})`,
+    resitGroup: (n) => `Resits — only if you need them (${n})`,
+    syncSubmitted: (t) => `Handed in on Brightspace, so marked done: ${t}`,
     srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · off',
     teamsOff: 'Teams is not connected. Switch it on in Settings (⚙) to see your timetable here.',
     teamsChecking: 'Checking Teams…',
@@ -717,6 +737,11 @@ const I18N = {
     updApplied: (v, n) => `Обновено до ${v}.` + (n ? ` Какво е ново: ${n}` : ''),
     tabSched: 'Разписание', noSched: 'Няма часове през следващите две седмици или Teams не е свързан.',
     tabOverdue: (n) => n ? `Изтекли (${n})` : 'Изтекли', noneOverdue: 'Няма изтекли.',
+    openBs: '↗ Отвори в Brightspace', briefDocs: 'Документи към заданието',
+    noBriefFound: 'До тази папка в Brightspace не е намерено задание — отвори я там, за да видиш какво се иска.',
+    noDeadlineGroup: (n) => `Без срок (${n})`,
+    resitGroup: (n) => `Поправки — само ако ти трябват (${n})`,
+    syncSubmitted: (t) => `Предадено в Brightspace, затова е отбелязано като готово: ${t}`,
     srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · изкл.',
     teamsOff: 'Teams не е свързан. Включи го от Настройки (⚙), за да виждаш разписанието тук.',
     teamsChecking: 'Проверявам Teams…',
@@ -736,6 +761,7 @@ let LANGS = [{ code: 'en', label: 'English', recognition: 'en-US' },
 let STATE = null, recog = null, listening = false, retryTimer = null;
 let VIEW = 'active';                       // which tab the task list is showing
 let SOURCE = 'bs';                         // 'bs' or 'teams' — beta layout only
+const openGroups = {};                     // the collapsed groups stay as you left them
 const T = (k) => (I18N[LANG] || I18N.en)[k];
 
 function applyStatic() {
@@ -871,11 +897,17 @@ async function load(focusId) {
 
 function ui() { return (STATE && STATE.ui) || {}; }
 const isOverdue = t => t.days_left !== null && t.days_left !== undefined && t.days_left < 0;
-function overdueRows() { return (STATE.tasks || []).filter(isOverdue); }
+/* A resit whose first attempt was handed in has its own group (beta): it is probably
+   not needed, but it is not hidden either — grades are not read, and a failed first
+   attempt is exactly when it matters. */
+const covered = t => !!(ui().group_undated && t.resit_covered);
+function coveredRows() { return (STATE.tasks || []).filter(covered); }
+function overdueRows() { return (STATE.tasks || []).filter(t => isOverdue(t) && !covered(t)); }
 /* With the Overdue tab on, an overdue task lives there and only there — otherwise it
    sits at the top of Active and buries what can still be done on time. */
 function activeRows() {
-  return ui().overdue_tab ? (STATE.tasks || []).filter(t => !isOverdue(t)) : (STATE.tasks || []);
+  const rows = (STATE.tasks || []).filter(t => !covered(t));
+  return ui().overdue_tab ? rows.filter(t => !isOverdue(t)) : rows;
 }
 
 function applyTabs() {
@@ -1023,14 +1055,19 @@ function renderTasks(focusId) {
   const box = $('tasks');
   const done = VIEW === 'done', overdue = VIEW === 'overdue';
   const rows = done ? (STATE.done || []) : overdue ? overdueRows() : activeRows();
-  if (!rows.length) {
+  if (!rows.length && !(VIEW === 'active' && coveredRows().length)) {
     box.innerHTML = `<div class="empty">${done ? T('noneDone') : overdue ? T('noneOverdue') : T('empty')}</div>`;
     return;
   }
-  box.innerHTML = rows.map(t => {
+  const ai = !!(STATE.features || {}).ai;
+  const card = t => {
     const d = t.days_left;
     const cls = done ? 'is-done'
       : d !== null && d <= 3 ? 'crit' : d !== null && d <= 7 ? 'warn' : '';
+    // In the beta nothing reads the brief for you, so the card points at where it is:
+    // the documents found next to the folder, and the folder itself.
+    const bsLink = !ai && /^https?:\/\//.test(t.source_url || '')
+      ? `<a class="btnlink" href="${esc(t.source_url)}" target="_blank" rel="noopener">${T('openBs')}</a>` : '';
     const links = (t.resources || []).map(r =>
       `<li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></li>`).join('');
     const subs = (t.submissions || []).map(s => `
@@ -1054,11 +1091,12 @@ function renderTasks(focusId) {
           <div class="brief">${esc(t.instructions)}</div>
           ${t.instructions_source
             ? `<div class="brief-src">${T('briefFrom')} ${esc(t.instructions_source)}</div>` : ''}`
-          : `<div class="brief-missing">${T((STATE.features || {}).ai ? 'briefMissing' : 'briefMissingNoAi')}</div>`}
+          : ai ? `<div class="brief-missing">${T('briefMissing')}</div>` : ''}
         ${subs ? `<h4>${T('submittedLabel')}</h4>${subs}` : ''}
+        ${links ? `<h4>${T(ai ? 'materials' : 'briefDocs')}</h4><ul>${links}</ul>` : ''}
+        ${!ai && !links && !t.description ? `<div class="brief-missing">${T('noBriefFound')}</div>` : ''}
         ${list(T('handIn'), t.deliverables)}
         ${list(T('reqs'), t.requirements)}
-        ${links ? `<h4>${T('materials')}</h4><ul>${links}</ul>` : ''}
         <h4>${T('files')}</h4>
         <div class="files" data-files="${t.id}"></div>
         <label class="filebtn">${T('attach')}
@@ -1071,12 +1109,30 @@ function renderTasks(focusId) {
                <button data-act="done">${T('markDone')}</button>
                <button data-act="blocked">${T('blocked')}</button>`}
           <button data-act="speak" data-label="${T('read')}">${T('read')}</button>
+          ${bsLink}
           <button class="solve ai-only" data-act="solve">${T('solve')}</button>
           ${done ? '' : `<button class="solve ai-only" data-act="submit">${T('submit')}</button>`}
         </div>
       </div>
     </div>`;
-  }).join('');
+  };
+  // Folders with no deadline at all (old years, info folders) go to a closed group at the
+  // bottom, so the list opens on what is actually due.
+  if (VIEW === 'active' && ui().group_undated) {
+    const dated = rows.filter(t => t.days_left !== null && t.days_left !== undefined);
+    const undated = rows.filter(t => t.days_left === null || t.days_left === undefined);
+    const resits = coveredRows();
+    const group = (key, label, list) => list.length ? `<details class="undated" data-group="${key}"
+        ${openGroups[key] ? 'open' : ''}><summary>${label}</summary>${list.map(card).join('')}</details>` : '';
+    box.innerHTML = dated.map(card).join('')
+      + (dated.length ? '' : `<div class="empty">${T('empty')}</div>`)
+      + group('resits', T('resitGroup')(resits.length), resits)
+      + group('undated', T('noDeadlineGroup')(undated.length), undated);
+    box.querySelectorAll('details.undated').forEach(det =>
+      det.addEventListener('toggle', () => { openGroups[det.dataset.group] = det.open; }));
+  } else {
+    box.innerHTML = rows.map(card).join('');
+  }
 
   box.querySelectorAll('.task').forEach(el => {
     el.addEventListener('click', e => {
@@ -1949,6 +2005,7 @@ async function followAutosync(speakChanges) {
       bits.push(T('syncNewFolder')(f.title, f.due));
       spoken.push(T('spokenNewFolder')(f.title, spokenDate(f.due)));
     });
+    (res.submitted || []).forEach(t => bits.push(T('syncSubmitted')(t)));
     (res.news || []).forEach(n => {
       bits.push(T('syncNews')(n.title));
       spoken.push(T('spokenNews')(n.title));
