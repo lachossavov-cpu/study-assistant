@@ -1338,6 +1338,34 @@ def running_version() -> str:
         return "?"
 
 
+@app.post("/api/update/check")
+def update_check(request: Request):
+    """Called when the dashboard opens. The server may have been running for days — the
+    window closes, the server does not — so this is the moment to look again."""
+    if not is_local(request):
+        raise HTTPException(403, "only from the computer")
+    return updater.check_now()
+
+
+@app.post("/api/update/apply", status_code=202)
+def update_apply(request: Request):
+    """Restart into the newer version that is already downloaded. The page reloads."""
+    if not is_local(request):
+        raise HTTPException(403, "only from the computer")
+    shell = updater._shell()
+    if shell is None or not os.environ.get("ASSISTANT_PAYLOAD"):
+        raise HTTPException(409, "not running inside the packaged app")
+    best = shell.pick_payload()[1]
+    if shell.vtuple(best.get("version")) <= shell.vtuple(running_version()):
+        raise HTTPException(409, "nothing newer is downloaded")
+
+    def later():
+        time.sleep(0.5)                                  # let this answer reach the page
+        updater.restart_detached(best["version"])
+    threading.Thread(target=later, daemon=True).start()
+    return {"restarting": True, "version": best["version"], "from": running_version()}
+
+
 @app.get("/api/update")
 def update_status():
     out = {"running": running_version(), "state": "unknown",
@@ -1350,8 +1378,13 @@ def update_status():
     # changed, once (the page remembers which versions it has announced)
     if (st.get("state") == "ready" and st.get("version") == out["running"]) \
             or os.environ.get("ASSISTANT_RESTARTED") == out["running"]:
-        return {**out, "state": "applied", "version": out["running"],
-                "notes": st.get("notes", "")}
+        notes = st.get("notes") or ""
+        if not notes:                       # the shell's later check wrote a status without them
+            try:
+                notes = (ROOT / "app" / f"notes-{out['running']}.txt").read_text(encoding="utf-8")
+            except OSError:
+                notes = ""
+        return {**out, "state": "applied", "version": out["running"], "notes": notes[:600]}
     return {**out, **st}
 
 

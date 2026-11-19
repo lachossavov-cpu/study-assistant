@@ -610,7 +610,9 @@ const I18N = {
     fbSend: 'Send', fbEmpty: 'Write something first, or pick a rating.',
     fbSaved: 'Thank you — saved.', fbMail: 'Your mail program is opening with the text filled in. Press Send there.',
     fbCopyTitle: 'Send this to whoever gave you the app',
-    updReady: (v, n) => `Update ${v} is downloaded — close the app and open it again to use it.` + (n ? ` What changed: ${n}` : ''),
+    updReady: (v, n) => `Update ${v} is downloaded — it installs the next time you open the dashboard.` + (n ? ` What changed: ${n}` : ''),
+    updApplying: (v) => `Installing update ${v} — the dashboard reloads in a few seconds…`,
+    updApplyFailed: 'The update did not come up in time. Close the app and start it again.',
     updNeedsDownload: (v) => `Version ${v} needs a fresh download — this copy is too old to update itself.`,
     updRolledBack: (v) => `Update ${v} did not start correctly, so the previous version is running. Nothing was lost.`,
     updApplied: (v, n) => `Updated to ${v}.` + (n ? ` What's new: ${n}` : ''),
@@ -731,7 +733,9 @@ const I18N = {
     fbSend: 'Изпрати', fbEmpty: 'Напиши нещо или дай оценка.',
     fbSaved: 'Благодаря — записано.', fbMail: 'Отваря се пощата ти с попълнен текст. Натисни Изпрати там.',
     fbCopyTitle: 'Прати това на човека, който ти даде приложението',
-    updReady: (v, n) => `Обновление ${v} е свалено — затвори приложението и го отвори пак, за да го ползваш.` + (n ? ` Какво е ново: ${n}` : ''),
+    updReady: (v, n) => `Обновление ${v} е свалено — инсталира се при следващото отваряне на таблото.` + (n ? ` Какво е ново: ${n}` : ''),
+    updApplying: (v) => `Инсталирам обновление ${v} — таблото се презарежда след няколко секунди…`,
+    updApplyFailed: 'Обновлението не тръгна навреме. Затвори приложението и го пусни пак.',
     updNeedsDownload: (v) => `Версия ${v} иска ново сваляне — това копие е твърде старо, за да се обнови само.`,
     updRolledBack: (v) => `Обновление ${v} не тръгна правилно, затова върви предишната версия. Нищо не е загубено.`,
     updApplied: (v, n) => `Обновено до ${v}.` + (n ? ` Какво е ново: ${n}` : ''),
@@ -1624,6 +1628,35 @@ async function solve(id, btn) {
    Ask once at start and once a little later, and say it in the log — an update never
    changes anything under a running session. */
 let updTold = '';
+
+/* Closing the window does not stop the app: it keeps running in the background, and
+   opening the dashboard again only showed a new window onto that same old process. An
+   update could wait for days that way. So opening the dashboard is where the app looks
+   for a newer version, and if there is one, restarts into it and reloads this page.
+   Returns true when a restart is under way (the caller then skips the rest of boot). */
+async function updateOnOpen() {
+  let u;
+  try { u = await (await fetch('/api/update')).json(); } catch (e) { return false; }
+  if (!u.shell) return false;                 // not the packaged app (JARVIS.bat, tests)
+  try { u = await (await fetch('/api/update/check', { method: 'POST' })).json(); }
+  catch (e) { return false; }
+  if (!u.newer) return false;
+  log('me', T('updApplying')(u.version));
+  try {
+    const r = await fetch('/api/update/apply', { method: 'POST' });
+    if (!r.ok) return false;
+  } catch (e) { return false; }
+  for (let i = 0; i < 90; i++) {              // the old server goes, the new one comes up
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const s = await (await fetch('/api/update')).json();
+      if (s.running === u.version) { location.reload(); return true; }
+    } catch (e) { /* between the two servers */ }
+  }
+  log('err', T('updApplyFailed'));
+  return true;
+}
+
 async function checkUpdate() {
   let u;
   try { u = await (await fetch('/api/update')).json(); } catch (e) { return; }
@@ -2118,7 +2151,10 @@ document.addEventListener('keydown', e => {
   // twice in a row does not queue two checks.
   // Teams is started by the same call (server side), after Brightspace, so the two never
   // fight over the browser.
-  if (STATE && (STATE.assistant || {}).onboarded) requestSync({ onStart: true });
+  // Check for an update first: if it restarts, a sync started now would be cut off.
+  updateOnOpen().then(restarting => {
+    if (!restarting && STATE && (STATE.assistant || {}).onboarded) requestSync({ onStart: true });
+  });
   checkUpdate();
   setTimeout(checkUpdate, 45000);          // the download finishes after the page is up
   setInterval(checkUpdate, 30 * 60000);

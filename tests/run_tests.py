@@ -802,6 +802,16 @@ def test_shared_copy():
             return True
         check("↻ отговаря и за Teams", sync_reports_teams)
 
+        def update_endpoints_outside_app():
+            """Извън опакованото приложение отварянето на таблото не бива да рестартира нищо."""
+            _, j = call("/api/update/check", "POST")
+            eq(j.get("newer"), False, "check: ")
+            eq(call("/api/update/apply", "POST")[0], 409, "apply извън приложението: ")
+            _, u = call("/api/update")
+            eq(u.get("shell"), None, "shell извън приложението: ")
+            return 'check казва „нищо“, apply отказва с 409'
+        check("обновяването при отваряне не прави нищо извън приложението", update_endpoints_outside_app)
+
         def feedback_local():
             eq(call("/api/feedback", "POST", {})[0], 400, "празен отзив: ")
             s_, j = call("/api/feedback", "POST", {"rating": 5, "quote": "Saved my deadline",

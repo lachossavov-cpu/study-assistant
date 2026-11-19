@@ -135,6 +135,14 @@ st = updater.quick_update_and_restart(shell=launcher, restart=restarted.append)
 check("never restarts twice in one start", not restarted and st.get("state") == "skipped", st)
 os.environ.pop("ASSISTANT_RESTARTED")
 
+# 8. a server that has been running for days: opening the dashboard finds the update
+publish("90.7.0")
+st = updater.check_now(shell=launcher)
+check("an open dashboard finds and downloads a newer version",
+      st.get("newer") and st.get("version") == "90.7.0" and st.get("running") == "90.5.0", st)
+check("...and keeps its notes where the shell's next check cannot wipe them",
+      (launcher.UPD / "notes-90.7.0.txt").read_text(encoding="utf-8") == "Fixed the thing.")
+
 restarted.clear()
 srv.shutdown()                       # offline: must not hold the start up, must not restart
 import time as _t  # noqa: E402
