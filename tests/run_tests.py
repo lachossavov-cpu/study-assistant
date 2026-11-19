@@ -812,6 +812,23 @@ def test_shared_copy():
             return 'check казва „нищо“, apply отказва с 409'
         check("обновяването при отваряне не прави нищо извън приложението", update_endpoints_outside_app)
 
+        def first_check_after_update():
+            """След обновление първата проверка при отваряне не се пропуска като „току-що"."""
+            dbf = home / "data" / "tasks.json"
+            db = json.loads(dbf.read_text(encoding="utf-8"))
+            _, u = call("/api/update")
+            db["last_sync"] = datetime.now().isoformat(timespec="seconds")
+            db["sync_version"] = u["running"]
+            dbf.write_text(json.dumps(db, ensure_ascii=False), encoding="utf-8")
+            _, j = call("/api/sync?on_start=true", "POST")
+            eq(j.get("reason"), "checked just now", "същата версия, току-що: ")
+            db["sync_version"] = "0.0.1"
+            dbf.write_text(json.dumps(db, ensure_ascii=False), encoding="utf-8")
+            _, j = call("/api/sync?on_start=true", "POST")
+            assert j.get("reason") != "checked just now", f"след обновление пак се пропусна: {j}"
+            return "по-стара версия на последната проверка → проверява наново"
+        check("първата проверка след обновление не се пропуска", first_check_after_update)
+
         def feedback_local():
             eq(call("/api/feedback", "POST", {})[0], 400, "празен отзив: ")
             s_, j = call("/api/feedback", "POST", {"rating": 5, "quote": "Saved my deadline",

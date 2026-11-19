@@ -185,6 +185,14 @@ def english_placeholders(db) -> int:
     return changed
 
 
+def program_version() -> str:
+    try:
+        return str(json.loads((paths.APP / "release.json").read_text(encoding="utf-8"))
+                   .get("version", ""))
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+
 def iso_local(dt_utc: str):
     """D2L hands out UTC with a Z. Store local wall-clock, which is what tasks.py sorts."""
     if not dt_utc:
@@ -611,6 +619,9 @@ def run(dry_run=False, lang="en"):
     db["announcements"] = (fresh_rows + db.get("announcements", []))[:60]
 
     db["last_sync"] = tasks_mod.now()
+    # which version of the program did this check — an update changes what a check
+    # produces, so the first start after one must not skip it as "checked just now"
+    db["sync_version"] = program_version()
     entry = {"at": tasks_mod.now(), "added": len(new_tasks), "updated": len(moved),
              "changes": ([{"id": t["id"], "change": "new", "title": t["title"]} for t in new_tasks]
                          + [{"id": m["id"], "change": "due", "from": m["from"], "to": m["to"]}

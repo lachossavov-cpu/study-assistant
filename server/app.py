@@ -542,7 +542,14 @@ def request_sync(lang: str | None = Query(None), force: bool = Query(False),
         age_h = fresh["age_hours"]
         if on_start:
             floor_h = brief_mod.sync_on_start_after_minutes() / 60.0
-            if age_h is not None and age_h < floor_h:
+            # Unless the last check was made by an older version: what a check produces
+            # changes with an update, and skipping it left the new links and documents
+            # out of the data for half an hour after updating.
+            # Only in a handed-out copy: the owner's data is also synced by Claude, which
+            # does not record a version, and every opening would then start a check.
+            same_version = (not paths.SHARED
+                            or db.get("sync_version") == running_version())
+            if age_h is not None and age_h < floor_h and same_version:
                 return {"teams": teams, "queued": None, "reason": "checked just now",
                         "browser": "opening", "freshness": fresh}
         elif not fresh["stale"]:
