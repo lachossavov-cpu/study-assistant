@@ -29,6 +29,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import paths  # noqa: E402
 
+# Inside the packaged app: if a newer version is out, install it and restart NOW, before
+# anything listens — so an update lands on the next start, not the one after. Does
+# nothing anywhere else (tests, JARVIS.bat). See tools/updater.py.
+try:
+    import updater  # noqa: E402
+    updater.quick_update_and_restart()
+except Exception:                                        # noqa: BLE001 - never block a start
+    pass
+
 # ROOT is one user's data (config, tasks, work, reports). The program itself is paths.APP.
 # They are the same folder in the original checkout and different in a handed-out copy.
 ROOT = paths.HOME
@@ -1332,10 +1341,13 @@ def update_status():
     try:
         st = json.loads((ROOT / "app" / "status.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return out
-    # "ready" for the version already running just means the restart happened
-    if st.get("state") == "ready" and st.get("version") == out["running"]:
-        st = {"state": "current", "version": out["running"], "notes": st.get("notes", "")}
+        st = {}
+    # "ready" for the version already running means it was just put to use — say what
+    # changed, once (the page remembers which versions it has announced)
+    if (st.get("state") == "ready" and st.get("version") == out["running"]) \
+            or os.environ.get("ASSISTANT_RESTARTED") == out["running"]:
+        return {**out, "state": "applied", "version": out["running"],
+                "notes": st.get("notes", "")}
     return {**out, **st}
 
 

@@ -36,7 +36,7 @@ STATIC = ROOT / "server" / "static"
 
 # the program, and nothing that belongs to a person
 PROGRAM_TOOLS = ["paths.py", "tasks.py", "brief.py", "speak.py", "ask.py", "cdp.py",
-                 "autosync.py", "teams.py"]
+                 "autosync.py", "teams.py", "updater.py"]
 # third-party libraries the payload uses. The packager cannot see the payload's imports
 # (it is loaded from files, not compiled in), so each is collected whole.
 SHELL_LIBS = ["fastapi", "starlette", "uvicorn", "pydantic", "pydantic_core", "anyio",

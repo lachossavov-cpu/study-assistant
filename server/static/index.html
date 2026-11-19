@@ -598,6 +598,7 @@ const I18N = {
     updReady: (v, n) => `Update ${v} is downloaded — close the app and open it again to use it.` + (n ? ` What changed: ${n}` : ''),
     updNeedsDownload: (v) => `Version ${v} needs a fresh download — this copy is too old to update itself.`,
     updRolledBack: (v) => `Update ${v} did not start correctly, so the previous version is running. Nothing was lost.`,
+    updApplied: (v, n) => `Updated to ${v}.` + (n ? ` What's new: ${n}` : ''),
     tabSched: 'Schedule', noSched: 'No classes in the next two weeks, or Teams is not connected.',
     tabOverdue: (n) => n ? `Overdue (${n})` : 'Overdue', noneOverdue: 'Nothing overdue.',
     srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · off',
@@ -713,6 +714,7 @@ const I18N = {
     updReady: (v, n) => `Обновление ${v} е свалено — затвори приложението и го отвори пак, за да го ползваш.` + (n ? ` Какво е ново: ${n}` : ''),
     updNeedsDownload: (v) => `Версия ${v} иска ново сваляне — това копие е твърде старо, за да се обнови само.`,
     updRolledBack: (v) => `Обновление ${v} не тръгна правилно, затова върви предишната версия. Нищо не е загубено.`,
+    updApplied: (v, n) => `Обновено до ${v}.` + (n ? ` Какво е ново: ${n}` : ''),
     tabSched: 'Разписание', noSched: 'Няма часове през следващите две седмици или Teams не е свързан.',
     tabOverdue: (n) => n ? `Изтекли (${n})` : 'Изтекли', noneOverdue: 'Няма изтекли.',
     srcBrightspace: 'Brightspace', srcTeams: 'Teams', srcTeamsOff: 'Teams · изкл.',
@@ -1572,7 +1574,15 @@ async function checkUpdate() {
   $('open-setup').title = 'Settings · v' + (u.running || '?');
   const key = u.state + ':' + (u.version || '');
   if (key === updTold) return;
-  if (u.state === 'ready') { updTold = key; log('me', T('updReady')(u.version, u.notes || '')); }
+  if (u.state === 'applied') {
+    updTold = key;
+    let told = '';
+    try { told = localStorage.getItem('upd-applied') || ''; } catch (e) {}
+    if (told !== u.version) {                    // once per version, not every start
+      log('me', T('updApplied')(u.version, u.notes || ''));
+      try { localStorage.setItem('upd-applied', u.version); } catch (e) {}
+    }
+  } else if (u.state === 'ready') { updTold = key; log('me', T('updReady')(u.version, u.notes || '')); }
   else if (u.state === 'needs_download') {
     updTold = key; log('err', T('updNeedsDownload')(u.version) + (u.url ? ' ' + u.url : ''));
   } else if (u.state === 'rolled_back') { updTold = key; log('err', T('updRolledBack')(u.version)); }
